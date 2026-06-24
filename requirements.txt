@@ -1,0 +1,24 @@
+# ── inference ─────────────────────────────────────────────────────────────────
+ultralytics>=8.2.0          # YOLO model loading and inference
+opencv-python>=4.8.0        # camera capture, frame read/write, annotation drawing
+
+# ── async runtime ─────────────────────────────────────────────────────────────
+aiosqlite>=0.19.0           # async SQLite for local buffer (WAL mode)
+httpx>=0.25.0               # async HTTP for ingest worker and webhooks
+
+# ── config ────────────────────────────────────────────────────────────────────
+PyYAML>=6.0.0               # YAML config file parsing
+
+# ── deep learning backend ─────────────────────────────────────────────────────
+# torch is a transitive dependency of ultralytics but listed here explicitly
+# because device auto-selection (CUDA / MPS / CPU) calls torch directly.
+#
+# CPU-only (smaller download, good for Raspberry Pi / Mac Mini CPU mode):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+# NVIDIA Jetson: do NOT install from PyPI — use the NVIDIA-provided wheel:
+#   https://developer.nvidia.com/embedded/pytorch
+#
+# Hailo-8: torch is not used for inference (Hailo runtime handles it).
+#   Install CPU-only torch for config validation, or set device: cpu in models.yaml.
+torch>=2.0.0
