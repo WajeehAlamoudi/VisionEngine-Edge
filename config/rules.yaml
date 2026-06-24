@@ -1,0 +1,139 @@
+rules:
+  # ── what rules do ───────────────────────────────────────────────────────────
+  # Rules decide which detections are worth acting on beyond just storing data.
+  # Every detection is evaluated against ALL enabled rules after zone filtering.
+  #
+  # Two outcomes when a rule matches:
+  #   1. The detection is written to the alerts table (if alerts_table is set)
+  #   2. A notification is fired (if a channel is enabled in notifications.yaml)
+  #
+  # Detections that match NO rule are still ingested as raw data — they just
+  # do not trigger any alert or notification. Rules only control alerting,
+  # not data collection.
+  #
+  # Fields:
+  #
+  #   name              Human-readable label. Shown in logs, alert rows, webhooks.
+  #                     Use underscores. Example: person_in_restricted_area
+  #
+  #   class             Object class to watch. Must exactly match a class name
+  #                     in the classes list of the model used by the target camera
+  #                     (defined in models.yaml, filtered per-camera in cameras.yaml).
+  #                     Startup validation will catch a mismatch before the device runs.
+  #
+  #   zones             Zone names to watch. Must match zone names in cameras.yaml.
+  #                     Empty list [] means any zone on any camera triggers this rule.
+  #                     Multiple zones: [zone_a, zone_b] — detection in ANY of them matches.
+  #                     The same zone name can appear on multiple cameras —
+  #                     the rule fires for ALL cameras that have that zone name.
+  #
+  #   min_confidence    Minimum confidence score for this specific rule.
+  #                     Stacks on top of the effective confidence floor, which is:
+  #                       cameras.yaml confidence_threshold (if set)
+  #                       otherwise models.yaml confidence_threshold for that model
+  #                     This value must be >= the effective floor — you cannot go lower.
+  #                     Example: model floor is 0.5, camera override is 0.75,
+  #                              rule min_confidence is 0.88 — detection must score above 0.88.
+  #                     Omit to use the camera's effective confidence floor as the only filter.
+  #
+  #   cooldown_seconds  Suppress repeated alerts for the same zone + class combination.
+  #                     After a rule fires for class X in zone Y, it will not fire
+  #                     again for class X in zone Y until the cooldown expires.
+  #                     Two DIFFERENT objects in the same zone still share the cooldown.
+  #                     Cooldown is per-camera — same zone on two cameras fire independently.
+  #                     Set to 0 or omit for no cooldown (every matching detection alerts).
+  #
+  #   severity          Alert severity level written to the alerts table.
+  #                     Drives the icon and color in the dashboard alert_list widget.
+  #                       critical → red    — immediate action required
+  #                       warning  → amber  — attention needed soon
+  #                       info     → blue   — informational, low urgency
+  #
+  #   alerts_table      Table in the branch schema where alert rows are inserted.
+  #                     Alert row contains: rule_name, class, camera_id, zone,
+  #                     confidence, severity, message, ts
+  #                     The table must exist in the branch schema.
+  #                     Omit to skip writing to the alerts table for this rule.
+  #
+  #   message           Custom message written into the alert row and webhook payload.
+  #                     Supports placeholders: {class}, {zone}, {camera}, {confidence}
+  #                     Example: "Person detected in {zone} — confidence {confidence}"
+  #
+  #   enabled           true  → rule is active
+  #                     false → rule is ignored even if a detection matches it
+  #                             use false to disable without deleting the rule
+
+
+  # ── case 1: any detection anywhere, no zone filter ──────────────────────────
+  # Fires for any truck detected on any camera in any zone.
+  # No confidence override — uses model.confidence_threshold.
+  # No cooldown — every detection triggers.
+
+  - name: truck_anywhere
+    class: truck
+    zones: []
+    severity: info
+    alerts_table: "alerts"
+    message: "Truck detected on {camera} in {zone}"
+    enabled: true
+
+
+  # ── case 2: specific zone, high confidence, cooldown ────────────────────────
+  # Only fires when a car is detected inside the parking_zone_a zone.
+  # Requires higher confidence than the model default.
+  # Cooldown prevents alert spam for a car parked for a long time.
+
+  - name: car_in_parking
+    class: car
+    zones: [parking_zone_a]
+    min_confidence: 0.75
+    cooldown_seconds: 60
+    severity: info
+    alerts_table: "alerts"
+    message: "Vehicle detected in {zone}"
+    enabled: true
+
+
+  # ── case 3: restricted area, strict confidence, fast cooldown ───────────────
+  # Fires when a person enters a restricted zone.
+  # High confidence required to avoid false positives in sensitive areas.
+  # Short cooldown — re-alert quickly if person remains.
+
+  - name: person_restricted_area
+    class: person
+    zones: [server_room, back_office]
+    min_confidence: 0.88
+    cooldown_seconds: 15
+    severity: critical
+    alerts_table: "alerts"
+    message: "Person detected in restricted area: {zone}"
+    enabled: true
+
+
+  # ── case 4: entrance monitoring, medium cooldown ────────────────────────────
+  # Counts and alerts on person presence in the main entrance.
+  # Longer cooldown — avoids noise in high-traffic areas.
+
+  - name: person_main_entrance
+    class: person
+    zones: [main_entrance]
+    min_confidence: 0.75
+    cooldown_seconds: 30
+    severity: info
+    alerts_table: "alerts"
+    message: "Person detected at {zone}"
+    enabled: true
+
+
+  # ── case 5: disabled rule ───────────────────────────────────────────────────
+  # Rule preserved for future use but not currently active.
+
+  - name: bicycle_anywhere
+    class: bicycle
+    zones: []
+    min_confidence: 0.70
+    cooldown_seconds: 30
+    severity: info
+    alerts_table: "alerts"
+    message: "Bicycle detected on {camera}"
+    enabled: false
