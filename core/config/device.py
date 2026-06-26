@@ -1,5 +1,8 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
+
+from .analytics import AnalyticsConfig
 
 
 @dataclass
@@ -36,12 +39,15 @@ class DeviceConfig:
     heartbeat: HeartbeatConfig
     health_file: HealthFileConfig
     buffer: BufferConfig
+    analytics: AnalyticsConfig  # device-level defaults, overridable per camera
 
 
 def parse(raw: dict) -> DeviceConfig:
     hb  = raw.get("heartbeat", {})
     hf  = raw.get("health_file", {})
     buf = raw.get("buffer", {})
+    an  = raw.get("analytics", {})
+
     return DeviceConfig(
         id=raw["id"],
         name=raw.get("name", raw["id"]),
@@ -65,5 +71,18 @@ def parse(raw: dict) -> DeviceConfig:
             max_size_mb=buf.get("max_size_mb", 200),
             retry_interval_seconds=buf.get("retry_interval_seconds", 10),
             delete_after_hours=buf.get("delete_after_hours", 24),
+        ),
+        analytics=AnalyticsConfig(
+            raw=an.get("raw", True),
+            dwell=an.get("dwell", False),
+            occupancy=an.get("occupancy", False),
+            trajectory=an.get("trajectory", False),
+            crossing=an.get("crossing", False),
+            tracker=an.get("tracker", "botsort.yaml"),
+            dwell_table=an.get("dwell_table", "dwell_events"),
+            occupancy_table=an.get("occupancy_table", "occupancy_snapshots"),
+            trajectory_table=an.get("trajectory_table", "trajectories"),
+            dwell_timeout_seconds=an.get("dwell_timeout_seconds", 30),
+            trajectory_interval_seconds=an.get("trajectory_interval_seconds", 10),
         ),
     )

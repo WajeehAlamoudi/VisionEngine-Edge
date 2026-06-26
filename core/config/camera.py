@@ -1,5 +1,8 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+
+from dataclasses import dataclass
+
+from .analytics import AnalyticsConfig
 
 
 @dataclass
@@ -29,9 +32,29 @@ class CameraConfig:
     summary_table: str | None
     summary_interval_seconds: int
     zones: list[Zone]           # [] = full frame (universal convention)
+    analytics: AnalyticsConfig  # merged: device default overridden by camera values
 
 
-def parse(raw: dict, device_fps: int) -> CameraConfig:
+def _merge_analytics(device: AnalyticsConfig, override: dict) -> AnalyticsConfig:
+    """Camera analytics block overrides device defaults field-by-field."""
+    return AnalyticsConfig(
+        raw=override.get("raw", device.raw),
+        dwell=override.get("dwell", device.dwell),
+        occupancy=override.get("occupancy", device.occupancy),
+        trajectory=override.get("trajectory", device.trajectory),
+        crossing=override.get("crossing", device.crossing),
+        tracker=device.tracker,   # tracker is device-level only — not overridable per camera
+        dwell_table=override.get("dwell_table", device.dwell_table),
+        occupancy_table=override.get("occupancy_table", device.occupancy_table),
+        trajectory_table=override.get("trajectory_table", device.trajectory_table),
+        dwell_timeout_seconds=override.get("dwell_timeout_seconds", device.dwell_timeout_seconds),
+        trajectory_interval_seconds=override.get(
+            "trajectory_interval_seconds", device.trajectory_interval_seconds
+        ),
+    )
+
+
+def parse(raw: dict, device_fps: int, device_analytics: AnalyticsConfig) -> CameraConfig:
     return CameraConfig(
         id=raw["id"],
         name=raw.get("name", raw["id"]),
@@ -55,4 +78,5 @@ def parse(raw: dict, device_fps: int) -> CameraConfig:
             Zone(name=z["name"], polygon=z["polygon"])
             for z in raw.get("zones", [])
         ],
+        analytics=_merge_analytics(device_analytics, raw.get("analytics", {})),
     )

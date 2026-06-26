@@ -145,6 +145,11 @@ cameras:
     zones:
       - name: main_entrance
         polygon: [[0,0],[640,0],[640,480],[0,480]]
+    # analytics override — enable dwell tracking for this camera
+    # inherits device defaults for everything else
+    analytics:
+      dwell: true     # track how long each person stays in main_entrance zone
+                      # automatically enables ByteTrack tracker for this camera
 
 
   # ── case 2: parking lot — routing (class-based table split) ─────────────────
@@ -173,6 +178,11 @@ cameras:
         polygon: [[0,0],[320,0],[320,480],[0,480]]
       - name: parking_entrance
         polygon: [[320,0],[640,0],[640,480],[320,480]]
+    # analytics override — occupancy + trajectory for parking analytics
+    analytics:
+      occupancy: true     # snapshot: how many persons/cars in each zone every 60s
+      trajectory: true    # sample positions for heatmap generation
+      trajectory_interval_seconds: 5   # sample more frequently than device default
 
 
   # ── case 3: lobby — general model, all classes, no zone filter ──────────────

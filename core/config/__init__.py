@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from .analytics import AnalyticsConfig
 from .api import ApiConfig, parse as _parse_api
 from .camera import CameraConfig, parse as _parse_camera
 from .collection import CollectionConfig, parse as _parse_collection
@@ -18,6 +19,7 @@ from .rule import RuleConfig, parse as _parse_rule
 # re-export all dataclasses so callers only need: from core.config import XxxConfig
 __all__ = [
     "AppConfig", "load_config",
+    "AnalyticsConfig",
     "ApiConfig", "IngestConfig", "RequestConfig",
     "CameraConfig", "Zone", "RoutingEntry",
     "CollectionConfig", "CollectionSession",
@@ -128,7 +130,7 @@ def _validate(cfg: AppConfig) -> None:
         if cam.raw_table and cam.routing:
             errors.append(f"{p}: use raw_table OR routing, not both")
 
-        if not cam.raw_table and not cam.routing:
+        if not cam.raw_table and not cam.routing and cam.analytics.raw:
             warnings.append(
                 f"{p}: no raw_table or routing defined — detections will not be stored"
             )
@@ -162,7 +164,16 @@ def _validate(cfg: AppConfig) -> None:
         for zone in cam.zones:
             active_zones.add(zone.name)
 
+    enabled_camera_ids = {c.id for c in cfg.enabled_cameras}
     for rule in cfg.enabled_rules:
+        # camera filter validation
+        for cam_id in rule.cameras:
+            if cam_id not in enabled_camera_ids:
+                warnings.append(
+                    f"rules[{rule.name}]: camera '{cam_id}' not found in enabled cameras "
+                    f"(available: {', '.join(sorted(enabled_camera_ids)) or 'none'})"
+                )
+
         if rule.class_name not in active_classes:
             warnings.append(
                 f"rules[{rule.name}]: class '{rule.class_name}' not active on any "
@@ -207,7 +218,7 @@ def load_config(config_dir: Path | str = "config") -> AppConfig:
     device = _parse_device(_load_yaml(d / "device.yaml")["device"])
     api = _parse_api(_load_yaml(d / "api.yaml")["api"])
     models = {m["id"]: _parse_model(m) for m in _load_yaml(d / "models.yaml")["models"]}
-    cameras = [_parse_camera(c, device.fps_target) for c in _load_yaml(d / "cameras.yaml")["cameras"]]
+    cameras = [_parse_camera(c, device.fps_target, device.analytics) for c in _load_yaml(d / "cameras.yaml")["cameras"]]
     rules = [_parse_rule(r) for r in _load_yaml(d / "rules.yaml")["rules"]]
     notifications = _parse_notifications(_load_yaml(d / "notifications.yaml")["notifications"])
     collection = _parse_collection(_load_yaml(d / "collection.yaml")["collection"])

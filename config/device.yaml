@@ -135,3 +135,40 @@ device:
     # Set to 0 to delete immediately after a successful push.
     #
     delete_after_hours: 24
+
+
+  # ── analytics defaults ──────────────────────────────────────────────────────
+  # Device-level defaults for the analytics pipeline.
+  # Each camera inherits these values and can override any field under its own
+  # analytics: block in cameras.yaml.
+  #
+  # raw              push one raw detection row per detection per frame
+  #                  (same behaviour as before this section existed)
+  # dwell            track how long each object stays in each zone
+  #                  requires a tracker (automatically enabled per camera when true)
+  # occupancy        periodic snapshot of how many objects are in each zone
+  # trajectory       sample object anchor positions over time (for heatmaps)
+  # crossing         detect line crossings (requires lines: in cameras.yaml)
+  #
+  analytics:
+    raw: true               # always push raw detections (disable to analytics-only mode)
+    dwell: false            # dwell tracking off by default — enable per camera
+    occupancy: false        # occupancy snapshots off by default
+    trajectory: false       # trajectory sampling off by default
+    crossing: false         # line crossing off by default
+
+    # tracker used by ALL cameras that have tracking enabled on this device
+    # built-ins (shipped with ultralytics, no download needed):
+    #   "botsort.yaml"    — production standard, handles occlusion well
+    #   "bytetrack.yaml"  — lighter, weaker on occlusion
+    # custom: provide a file path — "./config/my_tracker.yaml" or absolute path
+    tracker: "./config/botsort.yaml"
+
+    # table names (can be overridden per camera)
+    dwell_table: "dwell_events"
+    occupancy_table: "occupancy_snapshots"
+    trajectory_table: "trajectories"
+
+    # tuning
+    dwell_timeout_seconds: 30         # close dwell session if object not seen for N seconds
+    trajectory_interval_seconds: 10   # sample one position point every N seconds

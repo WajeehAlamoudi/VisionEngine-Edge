@@ -39,10 +39,7 @@ async def run(config_dir: str) -> None:
     await buffer.start()
 
     registry = ModelRegistry()
-    registry.load_for_cameras(
-        cfg.models,
-        needed_ids=[cam.model_id for cam in cfg.enabled_cameras],
-    )
+    registry.load_for_cameras(cfg.models, cfg.enabled_cameras)
 
     rules = RulesEngine(cfg.enabled_rules)
     notifier = Notifier(cfg)
@@ -59,7 +56,7 @@ async def run(config_dir: str) -> None:
     pipelines = [
         CameraPipeline(
             cam=cam,
-            runner=registry.get(cam.model_id),
+            runner=registry.get(cam.id),
             buffer=buffer,
             rules=rules,
             notifier=notifier,
