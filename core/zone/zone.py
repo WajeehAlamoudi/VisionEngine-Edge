@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from core.config import Zone
 
 
@@ -18,16 +19,14 @@ def point_in_polygon(x: float, y: float, polygon: list[list[int]]) -> bool:
 
 def assign_zone(cx: float, cy: float, zones: list[Zone]) -> str:
     """
-    Return the name of the first zone that contains point (cx, cy).
+    Return the name of the first zone containing point (cx, cy).
 
-    Conventions (consistent with config empty-list = all):
-      zones = []  → camera is full-frame, every detection is tagged "full_frame"
-      zones set, no match → detection falls outside all polygons, tagged "unzoned"
+    zones = []  → full-frame camera, every detection tagged "full_frame"
+    zones set, no match → detection outside all polygons, tagged "unzoned"
 
-    Zones are evaluated in config order — first match wins.
-    Use (cx, cy) as the bounding-box center for vehicles and objects.
-    For person detection, prefer passing the bottom-center of the box
-    (cx, y2) so zone membership is based on where feet touch the ground.
+    Zones evaluated in config order — first match wins.
+    Pass bottom-center (cx, y2) for persons so zone membership is based on
+    where feet touch the ground; pass bounding-box center for everything else.
     """
     if not zones:
         return "full_frame"

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import aiosqlite
 
 from core.config import BufferConfig
+from .types import BufferedRow
 
 
 _CREATE_TABLE = """
@@ -25,14 +26,6 @@ _CREATE_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_status_created
 ON buffer (status, created_at)
 """
-
-
-@dataclass
-class BufferedRow:
-    id: int
-    table: str
-    row: dict
-    created_at: float
 
 
 class Buffer:
@@ -59,9 +52,7 @@ class Buffer:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self._path)
         self._db.row_factory = aiosqlite.Row
-        # WAL mode allows concurrent reads while writing
         await self._db.execute("PRAGMA journal_mode=WAL")
-        # NORMAL is safe with WAL and faster than FULL
         await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.execute(_CREATE_TABLE)
         await self._db.execute(_CREATE_INDEX)
@@ -76,9 +67,9 @@ class Buffer:
         """
         Persist detection rows.
 
-        Each item in rows must have:
+        Each item must have:
           "table" → target table name in the branch schema
-          "row"   → dict with detection fields (camera_id, class, confidence, bbox, zone, ts)
+          "row"   → dict with detection fields
         """
         if not rows:
             return
@@ -109,7 +100,7 @@ class Buffer:
             ]
 
     async def mark_sent(self, ids: list[int]) -> None:
-        """Mark rows as successfully pushed. They will be deleted after delete_after_hours."""
+        """Mark rows as successfully pushed."""
         if not ids:
             return
         placeholders = ",".join("?" * len(ids))
@@ -165,7 +156,6 @@ class Buffer:
         if self._path.stat().st_size <= self._max_bytes:
             return
 
-        # pass 1: delete oldest sent rows
         await self._db.execute(
             "DELETE FROM buffer WHERE id IN ("
             "  SELECT id FROM buffer WHERE status='sent' "
@@ -178,8 +168,6 @@ class Buffer:
         if self._path.stat().st_size <= self._max_bytes:
             return
 
-        # pass 2: still over limit — drop oldest pending rows (data loss)
-        import sys
         print(
             "WARNING  buffer: size limit exceeded after purging sent rows — "
             "dropping oldest pending rows. Increase max_size_mb or fix connectivity.",

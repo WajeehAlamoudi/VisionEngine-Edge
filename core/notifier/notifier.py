@@ -7,6 +7,7 @@ import httpx
 
 from core.config import AppConfig, WebhookConfig
 from core.rules import RuleMatch
+from .payload import _build_payload
 
 log = logging.getLogger(__name__)
 
@@ -41,10 +42,7 @@ class Notifier:
             await self._client.aclose()
 
     async def notify(self, matches: list[RuleMatch]) -> None:
-        """
-        Fire all channels for every match in the list.
-        Called from the pipeline after rules evaluation.
-        """
+        """Fire all channels for every match. Called from the pipeline after rules evaluation."""
         for match in matches:
             self._log(match)
 
@@ -90,22 +88,3 @@ class Notifier:
                         webhook.name, webhook.timeout_seconds)
         except httpx.RequestError as exc:
             log.warning("notifier: webhook '%s' error: %s", webhook.name, exc)
-
-
-# ── payload builder ───────────────────────────────────────────────────────────
-
-def _build_payload(match: RuleMatch, device_id: str) -> dict:
-    det = match.detection
-    rule = match.rule
-    return {
-        "rule": rule.name,
-        "class": det.class_name,
-        "camera_id": det.camera_id,
-        "camera_name": det.camera_name,
-        "zone": det.zone,
-        "confidence": round(det.confidence, 4),
-        "severity": rule.severity,
-        "message": match.message,
-        "device_id": device_id,
-        "ts": det.ts,
-    }

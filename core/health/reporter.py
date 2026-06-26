@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from core.buffer import Buffer
 from core.config import AppConfig
-from core.pipeline import CameraPipeline
+from .rows import _heartbeat_row, _utcnow, _write_json
 
 log = logging.getLogger(__name__)
 
@@ -29,12 +27,7 @@ class HealthReporter:
     and vice versa.
     """
 
-    def __init__(
-            self,
-            cfg: AppConfig,
-            pipelines: list[CameraPipeline],
-            buffer: Buffer,
-    ) -> None:
+    def __init__(self, cfg: AppConfig, pipelines: list, buffer: Buffer) -> None:
         self._cfg = cfg
         self._pipelines = pipelines
         self._buffer = buffer
@@ -85,7 +78,7 @@ class HealthReporter:
                 health = await self._build_health()
                 await self._buffer.write([{
                     "table": cfg.table,
-                    "row": _heartbeat_row(health),
+                    "row":   _heartbeat_row(health),
                 }])
                 log.debug("heartbeat: pushed to '%s'", cfg.table)
             except Exception as exc:
@@ -110,12 +103,12 @@ class HealthReporter:
         for p in self._pipelines:
             has_error = p.last_error is not None
             cameras.append({
-                "id": p._cam.id,
-                "name": p._cam.name,
-                "status": "error" if has_error else "ok",
+                "id":               p._cam.id,
+                "name":             p._cam.name,
+                "status":           "error" if has_error else "ok",
                 "detections_total": p.detections_total,
                 "frames_processed": p.frames_processed,
-                "last_error": p.last_error,
+                "last_error":       p.last_error,
             })
             if has_error:
                 cameras_error += 1
@@ -127,43 +120,17 @@ class HealthReporter:
         elif cameras_active == 0:
             status = "error"
         else:
-            status = "degraded"  # some cameras running, some not
+            status = "degraded"
 
         return {
-            "device_id": self._cfg.device.id,
-            "name": self._cfg.device.name,
-            "location": self._cfg.device.location,
-            "status": status,
+            "device_id":      self._cfg.device.id,
+            "name":           self._cfg.device.name,
+            "location":       self._cfg.device.location,
+            "status":         status,
             "uptime_seconds": uptime,
-            "cameras": cameras,
+            "cameras":        cameras,
             "cameras_active": cameras_active,
-            "cameras_error": cameras_error,
-            "buffer": buf_stats,
-            "ts": ts,
+            "cameras_error":  cameras_error,
+            "buffer":         buf_stats,
+            "ts":             ts,
         }
-
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-def _heartbeat_row(health: dict) -> dict:
-    return {
-        "device_id": health["device_id"],
-        "name": health["name"],
-        "location": health["location"],
-        "status": health["status"],
-        "cameras_active": health["cameras_active"],
-        "cameras_error": health["cameras_error"],
-        "detections_total": sum(c["detections_total"] for c in health["cameras"]),
-        "buffer_pending": health["buffer"]["pending"],
-        "uptime_seconds": health["uptime_seconds"],
-        "ts": health["ts"],
-    }
-
-
-def _write_json(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -51,19 +51,16 @@ class IngestWorker:
     async def stop(self) -> None:
         """Signal the loop to stop and wait for the current flush to finish."""
         self._stop.set()
-        self._trigger.set()  # wake immediately so the loop can exit cleanly
+        self._trigger.set()
         if self._task:
             await self._task
         log.info("ingest: worker stopped")
 
     def trigger(self) -> None:
-        """
-        Request an early flush.
-        Called by the pipeline after writing batch_size rows to the buffer.
-        """
+        """Request an early flush. Called by the pipeline after writing batch_size rows."""
         self._trigger.set()
 
-    # ── internal loop ────────────────────────────────────────────────────────
+    # ── internal loop ─────────────────────────────────────────────────────────
 
     async def _loop(self) -> None:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -86,7 +83,6 @@ class IngestWorker:
         if not rows:
             return
 
-        # group by target table — one request per table per flush
         by_table: dict[str, list[BufferedRow]] = defaultdict(list)
         for row in rows:
             by_table[row.table].append(row)
@@ -128,11 +124,6 @@ class IngestWorker:
             return False
 
     def _backoff_delay(self) -> float:
-        """
-        Returns the next wait duration in seconds.
-        0 failures → flush_interval_seconds (normal cadence)
-        N failures → retry_interval_seconds × min(2^(N-1), 5) (capped at 5×)
-        """
         if self._consecutive_failures == 0:
             return float(self._flush_interval)
         factor = min(2 ** (self._consecutive_failures - 1), 5)
