@@ -1,8 +1,15 @@
 api:
+  # ── identity ────────────────────────────────────────────────────────────────
+  # The branch this edge device belongs to.
+  # Must exactly match the branch_id in the VisionEngine backend.
+  # Included in every alert webhook payload and ingest request for routing.
+  #
+  branch_id: YOUR_BRANCH_ID
+
   # ── authentication ──────────────────────────────────────────────────────────
   # The API key for the branch this device belongs to.
   # Generated in the VisionEngine dashboard under Branch Settings → API Key.
-  # Sent as the X-API-Key header on every ingest request.
+  # Sent as the X-API-Key header on every ingest and webhook request.
   #
   # NEVER commit a real key to git.
   # Use YOUR_VALUE_HERE as a placeholder and fill it in after cloning.

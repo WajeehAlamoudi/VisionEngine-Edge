@@ -16,8 +16,9 @@ class RequestConfig:
 
 @dataclass
 class ApiConfig:
+    branch_id: str   # which branch this device belongs to — used for alert routing
     key: str
-    url: str  # trailing slash stripped at parse time
+    url: str         # trailing slash stripped at parse time
     ingest: IngestConfig
     request: RequestConfig
 
@@ -26,6 +27,7 @@ def parse(raw: dict) -> ApiConfig:
     ingest = raw.get("ingest", {})
     request = raw.get("request", {})
     return ApiConfig(
+        branch_id=raw["branch_id"],
         key=raw["key"],
         url=raw["url"].rstrip("/"),
         ingest=IngestConfig(

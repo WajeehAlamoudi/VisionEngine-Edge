@@ -28,6 +28,7 @@ class Notifier:
         self._log_enabled = cfg.notifications.log.enabled
         self._webhooks = cfg.enabled_webhooks
         self._device_id = cfg.device.id
+        self._branch_id = cfg.api.branch_id
         self._client: httpx.AsyncClient | None = None
         self._pending: set[asyncio.Task] = set()
 
@@ -35,21 +36,19 @@ class Notifier:
         self._client = httpx.AsyncClient()
 
     async def stop(self) -> None:
-        """Wait for any in-flight webhook tasks, then close the HTTP client."""
         if self._pending:
             await asyncio.gather(*self._pending, return_exceptions=True)
         if self._client:
             await self._client.aclose()
 
     async def notify(self, matches: list[RuleMatch]) -> None:
-        """Fire all channels for every match. Called from the pipeline after rules evaluation."""
         for match in matches:
             self._log(match)
 
             if not self._webhooks:
                 continue
 
-            payload = _build_payload(match, self._device_id)
+            payload = _build_payload(match, self._device_id, self._branch_id)
             for webhook in self._webhooks:
                 task = asyncio.create_task(
                     self._send(webhook, payload),
@@ -58,17 +57,15 @@ class Notifier:
                 self._pending.add(task)
                 task.add_done_callback(self._pending.discard)
 
-    # ── channels ──────────────────────────────────────────────────────────────
-
     def _log(self, match: RuleMatch) -> None:
         if not self._log_enabled:
             return
         det = match.detection
         rule = match.rule
         log.info(
-            "ALERT [%s] rule=%s  %s in %s  camera=%s  conf=%.2f",
+            "ALERT [%s] rule=%s  %s in %s  camera=%s  conf=%.2f  track_id=%s",
             rule.severity.upper(), rule.name,
-            det.class_name, det.zone, det.camera_id, det.confidence,
+            det.class_name, det.zone, det.camera_id, det.confidence, det.track_id,
         )
 
     async def _send(self, webhook: WebhookConfig, payload: dict) -> None:
