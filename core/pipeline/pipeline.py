@@ -15,7 +15,7 @@ from core.model import ModelRunner
 from core.notifier import Notifier
 from core.rules import RulesEngine
 from .enricher import enrich
-from .rows import _utcnow, alert_row
+from .rows import _utcnow, notification_row
 
 log = logging.getLogger(__name__)
 
@@ -167,14 +167,14 @@ class CameraPipeline:
             # 4. Analytics (raw store, dwell, occupancy, trajectory)
             rows.extend(self._analytics.process(event))
 
-            # 5. Alerts
+            # 5. Notifications
             if matches:
                 await self._notifier.notify(matches)
                 for match in matches:
-                    if match.rule.alerts_table:
+                    if match.rule.notifications_table:
                         rows.append({
-                            "table": match.rule.alerts_table,
-                            "row":   alert_row(match),
+                            "table": match.rule.notifications_table,
+                            "row":   notification_row(match),
                         })
 
             self.detections_total += 1

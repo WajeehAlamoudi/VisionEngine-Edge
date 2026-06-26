@@ -26,12 +26,12 @@ def detection_row(event: DetectionEvent) -> dict:
         "ts":            event.capture_ts,
     }
     if event.attributes:
-        row.update(event.attributes)   # spread attribute columns directly
+        row.update(event.attributes)
     return row
 
 
-def alert_row(match) -> dict:
-    """Build an alert DB row from a RuleMatch."""
+def notification_row(match) -> dict:
+    """Build a notification DB row from a RuleMatch."""
     det = match.detection
     return {
         "rule_name":  match.rule.name,

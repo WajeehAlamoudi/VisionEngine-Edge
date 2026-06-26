@@ -14,17 +14,17 @@ class RulesEngine:
     Two roles:
 
     1. Filter  — discards detections that match no rule (irrelevant to this deployment).
-    2. Alert   — rules with alert=True that cleared cooldown produce RuleMatch objects.
+    2. Notify  — rules with notify=True that cleared cooldown produce RuleMatch objects.
 
     filter_and_tag(event) returns:
       None         → no rule matched → discard
-      []           → matched, no alerts (alert=False or cooldown active)
-      [m1, m2, …] → matched + these alerts should fire
+      []           → matched, no notification (notify=False or cooldown active)
+      [m1, m2, …] → matched + these notifications should fire
     """
 
     def __init__(self, rules: list[RuleConfig]) -> None:
         self._rules = rules
-        # (rule_name, camera_id, zone) → monotonic timestamp of last alert
+        # (rule_name, camera_id, zone) → monotonic timestamp of last notification
         self._last_fired: dict[tuple[str, str, str], float] = {}
 
     def filter_and_tag(self, event: DetectionEvent) -> list[RuleMatch] | None:
@@ -46,8 +46,8 @@ class RulesEngine:
 
             passes = True
 
-            if not rule.alert:
-                continue    # filter-only rule — passes silently, no alert
+            if not rule.notify:
+                continue    # filter-only rule — passes silently, no notification
 
             key = (rule.name, event.camera_id, event.zone)
             now = time.monotonic()
