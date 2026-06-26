@@ -65,6 +65,14 @@ notifications:
       enabled: false
       timeout_seconds: 5
 
+    # VisionEngine backend — receives notifications and broadcasts to the frontend via WebSocket.
+    # Set url to: {api.url}/notifications/webhook  (same base as your ingest URL)
+    # The edge authenticates with the X-API-Key from api.yaml — no extra config needed.
+    - name: visionengine
+      url: YOUR_API_URL/api/v1/notifications/webhook
+      enabled: false
+      timeout_seconds: 5
+
     # Custom endpoint — any server that accepts POST + JSON
     # Useful for integrating with your own systems or third-party platforms
     - name: custom
