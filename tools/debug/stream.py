@@ -23,6 +23,11 @@ class CameraStream:
             return False
         self.width  = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # drain frames until the decoder locks onto a keyframe
+        print("Syncing decoder...", end="", flush=True)
+        for _ in range(60):
+            self._cap.grab()
+        print(" done")
         return True
 
     def read(self):
