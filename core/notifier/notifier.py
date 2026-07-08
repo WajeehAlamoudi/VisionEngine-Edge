@@ -29,6 +29,7 @@ class Notifier:
         self._webhooks = cfg.enabled_webhooks
         self._device_id = cfg.device.id
         self._branch_id = cfg.api.branch_id
+        self._api_key = cfg.api.key
         self._client: httpx.AsyncClient | None = None
         self._pending: set[asyncio.Task] = set()
 
@@ -73,6 +74,7 @@ class Notifier:
             resp = await self._client.post(
                 webhook.url,
                 json=payload,
+                headers={"X-API-Key": self._api_key},
                 timeout=webhook.timeout_seconds,
             )
             if resp.status_code >= 400:
