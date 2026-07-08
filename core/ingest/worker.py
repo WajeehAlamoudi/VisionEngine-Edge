@@ -31,7 +31,6 @@ class IngestWorker:
 
     def __init__(self, cfg: AppConfig, buffer: Buffer) -> None:
         self._url = f"{cfg.api.url}/branches/ingest"
-        self._branch_id = cfg.api.branch_id
         self._headers = {"X-API-Key": cfg.api.key}
         self._batch_size = cfg.api.ingest.batch_size
         self._flush_interval = cfg.api.ingest.flush_interval_seconds
@@ -107,7 +106,7 @@ class IngestWorker:
     async def _push(
             self, client: httpx.AsyncClient, table: str, batch: list[BufferedRow]
     ) -> bool:
-        payload = {"branch_id": self._branch_id, "table": table, "rows": [r.row for r in batch]}
+        payload = {"table": table, "rows": [r.row for r in batch]}
         try:
             resp = await client.post(self._url, json=payload, headers=self._headers)
             if resp.status_code in (200, 201):
