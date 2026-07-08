@@ -89,7 +89,11 @@ models:
   #               false → stateless predict — track_id is always null (default).
   #                        Cameras sharing this model_id share one model instance (RAM efficient).
   #
-  #   Tracker algorithm is set device-wide via tracker: in device.yaml.
+  #   tracker     Tracker algorithm to use when use_tracker: true.
+  #               Built-ins shipped with ultralytics (no download needed):
+  #                 "botsort.yaml"   — production standard, handles occlusion well
+  #                 "bytetrack.yaml" — lighter, weaker on occlusion
+  #               Different models can use different algorithms independently.
 
 
   # ── model 1: general purpose — full COCO pretrained ─────────────────────────
@@ -112,6 +116,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
+    tracker: "botsort.yaml"
 
 
   # ── model 2: person-only fine-tuned ─────────────────────────────────────────
@@ -129,6 +134,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
+    tracker: "botsort.yaml"
 
 
   # ── model 3: vehicle-only ────────────────────────────────────────────────────
@@ -149,6 +155,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
+    tracker: "botsort.yaml"
 
 
   # ── model 4: Hailo compiled (Raspberry Pi + Hailo-8L hat) ───────────────────
@@ -172,3 +179,4 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
+    tracker: "botsort.yaml"

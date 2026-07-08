@@ -18,19 +18,19 @@ from .rule import RuleConfig, parse as _parse_rule
 # re-export all dataclasses so callers only need: from core.config import XxxConfig
 __all__ = [
     "AppConfig", "load_config",
-    "ApiConfig", "IngestConfig", "RequestConfig",
+    "ApiConfig", "IngestConfig", "BufferConfig", "RequestConfig",
     "CameraConfig", "Zone", "RoutingEntry",
     "CollectionConfig", "CollectionSession",
-    "DeviceConfig", "HeartbeatConfig", "HealthFileConfig", "BufferConfig",
+    "DeviceConfig", "HeartbeatConfig", "HealthFileConfig",
     "ModelConfig",
     "NotificationsConfig", "WebhookConfig", "LogChannelConfig",
     "RuleConfig",
 ]
 
-from .api import IngestConfig, RequestConfig
+from .api import IngestConfig, BufferConfig, RequestConfig
 from .camera import Zone, RoutingEntry
 from .collection import CollectionSession
-from .device import HeartbeatConfig, HealthFileConfig, BufferConfig
+from .device import HeartbeatConfig, HealthFileConfig
 from .notifications import LogChannelConfig
 from .collection import ScheduleConfig, SamplingConfig, FiltersConfig, SaveConfig
 

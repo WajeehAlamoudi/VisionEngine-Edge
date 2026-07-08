@@ -14,6 +14,7 @@ class ModelConfig:
     iou_threshold: float
     input_size: list[int]   # [width, height]
     use_tracker: bool        # true = BoT-SORT tracker ON → track_id populated per object
+    tracker: str             # tracker algorithm file — "botsort.yaml" | "bytetrack.yaml"
 
 
 def parse(raw: dict) -> ModelConfig:
@@ -28,4 +29,5 @@ def parse(raw: dict) -> ModelConfig:
         iou_threshold=float(raw.get("iou_threshold", 0.45)),
         input_size=raw.get("input_size", [640, 640]),
         use_tracker=bool(raw.get("use_tracker", False)),
+        tracker=raw.get("tracker", "botsort.yaml"),
     )

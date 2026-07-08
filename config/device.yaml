@@ -8,8 +8,6 @@ device:
   fps_target: 5
   max_cameras: 4
   log_level: INFO           # DEBUG | INFO | WARNING | ERROR
-  tracker: "botsort.yaml"  # botsort.yaml | bytetrack.yaml — used by cameras with use_tracker: true
-
   heartbeat:
     enabled: true
     interval_seconds: 60
@@ -20,8 +18,3 @@ device:
     path: "/tmp/visionengine-edge-health.json"
     interval_seconds: 30
 
-  buffer:
-    path: "./data/buffer.db"
-    max_size_mb: 200
-    retry_interval_seconds: 10
-    delete_after_hours: 24

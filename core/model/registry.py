@@ -21,7 +21,6 @@ class ModelRegistry:
             self,
             models: dict[str, ModelConfig],
             cameras: list[CameraConfig],
-            tracker: str = "botsort.yaml",
     ) -> None:
         shared: dict[str, ModelRunner] = {}   # model_id → shared runner (predict-only cameras)
 
@@ -34,7 +33,7 @@ class ModelRegistry:
             model_cfg = models[cam.model_id]
             if model_cfg.use_tracker:
                 # tracker is stateful — each camera needs its own dedicated runner
-                runner = ModelRunner(model_cfg, use_tracker=True, tracker=tracker)
+                runner = ModelRunner(model_cfg, use_tracker=True, tracker=model_cfg.tracker)
                 runner.load()
                 log.info("model '%s' loaded (dedicated+tracker) for camera '%s'", cam.model_id, cam.id)
             else:

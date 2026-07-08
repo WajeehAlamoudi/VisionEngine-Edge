@@ -41,18 +41,44 @@ api:
     flush_interval_seconds: 30
 
 
+  # ── local buffer ────────────────────────────────────────────────────────────
+  # Detection rows are written to a local SQLite database before being pushed
+  # to the ingest API. If the API is unreachable, rows stay in the buffer and
+  # are retried automatically. No data is lost during network outages.
+  #
+  buffer:
+    # Path to the SQLite database file.
+    # Use a persistent location — not /tmp — so the buffer survives reboots.
+    #
+    path: "./data/buffer.db"
+
+    # Maximum disk space the buffer database is allowed to use.
+    # When this limit is reached, the oldest unsent rows are deleted to make room.
+    #
+    max_size_mb: 200
+
+    # Base wait time between retries after a failed push.
+    # Uses exponential backoff — delay grows up to 5× this value on repeated
+    # failures, then resets when a push succeeds.
+    #
+    retry_interval_seconds: 10
+
+    # How long to keep rows that were successfully sent before deleting them.
+    # Set to 0 to delete immediately after a successful push.
+    #
+    delete_after_hours: 24
+
+
   # ── request settings ────────────────────────────────────────────────────────
   # Controls HTTP request behaviour when calling the VisionEngine API.
   #
   request:
     # Seconds to wait for a response before treating the request as failed.
-    # If the API does not respond within this window, the rows stay in the buffer
-    # and will be retried according to buffer.retry_interval_seconds in device.yaml.
+    # Rows stay in the buffer and are retried on the next flush.
     #
     timeout_seconds: 10
 
     # Maximum number of consecutive failures before the ingest worker pauses
     # and waits for a longer backoff period before retrying.
-    # This prevents flooding the API with requests during an outage.
     #
     max_consecutive_failures: 5

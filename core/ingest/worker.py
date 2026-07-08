@@ -36,7 +36,7 @@ class IngestWorker:
         self._flush_interval = cfg.api.ingest.flush_interval_seconds
         self._timeout = cfg.api.request.timeout_seconds
         self._max_failures = cfg.api.request.max_consecutive_failures
-        self._retry_interval = cfg.device.buffer.retry_interval_seconds
+        self._retry_interval = cfg.api.buffer.retry_interval_seconds
         self._buffer = buffer
         self._trigger = asyncio.Event()
         self._stop = asyncio.Event()

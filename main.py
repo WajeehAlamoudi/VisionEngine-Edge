@@ -35,11 +35,11 @@ async def run(config_dir: str) -> None:
 
     # ── initialise components ─────────────────────────────────────────────────
 
-    buffer = Buffer(cfg.device.buffer)
+    buffer = Buffer(cfg.api.buffer)
     await buffer.start()
 
     registry = ModelRegistry()
-    registry.load_for_cameras(cfg.models, cfg.enabled_cameras, tracker=cfg.device.tracker)
+    registry.load_for_cameras(cfg.models, cfg.enabled_cameras)
 
     rules = RulesEngine(cfg.enabled_rules)
     notifier = Notifier(cfg)

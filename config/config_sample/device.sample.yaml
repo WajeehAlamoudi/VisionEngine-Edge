@@ -56,15 +56,6 @@ device:
   #
   log_level: INFO           # DEBUG | INFO | WARNING | ERROR
 
-  # Tracker algorithm used by cameras with use_tracker: true in models.yaml.
-  # Built-ins shipped with ultralytics (no download needed):
-  #   "botsort.yaml"    — production standard, handles occlusion well
-  #   "bytetrack.yaml"  — lighter, weaker on occlusion
-  # Custom: provide a relative or absolute path to your own tracker config.
-  #
-  tracker: "botsort.yaml"
-
-
   # ── heartbeat ───────────────────────────────────────────────────────────────
   # The heartbeat pushes one status row to the `nodes` table in the branch schema
   # at regular intervals. This lets the VisionEngine dashboard show which devices
@@ -114,32 +105,3 @@ device:
     interval_seconds: 30
 
 
-  # ── local buffer ────────────────────────────────────────────────────────────
-  # Detection rows are written to a local SQLite database before being pushed
-  # to the VisionEngine ingest API. If the API is unreachable, rows stay in the
-  # buffer and are retried. This ensures no data is lost during network outages.
-  #
-  buffer:
-    # Path to the SQLite database file.
-    # Use a persistent location — not /tmp — so the buffer survives reboots.
-    #
-    path: "./data/buffer.db"
-
-    # Maximum disk space the buffer database is allowed to use.
-    # When this limit is reached, the oldest unsent rows are deleted to make room.
-    # Prevents the device from filling its disk during long outages.
-    #
-    max_size_mb: 200
-
-    # How often to attempt pushing pending rows to the API.
-    # If the last push failed, the next attempt happens after this interval.
-    # Uses exponential backoff — actual delay grows up to 5× this value on
-    # repeated failures, then resets when a push succeeds.
-    #
-    retry_interval_seconds: 10
-
-    # How long to keep rows that were successfully sent before deleting them.
-    # Keeping sent rows briefly allows you to inspect recent data locally.
-    # Set to 0 to delete immediately after a successful push.
-    #
-    delete_after_hours: 24

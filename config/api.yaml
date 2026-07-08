@@ -7,6 +7,12 @@ api:
     batch_size: 50
     flush_interval_seconds: 30
 
+  buffer:
+    path: "./data/buffer.db"
+    max_size_mb: 200
+    retry_interval_seconds: 10
+    delete_after_hours: 24
+
   request:
     timeout_seconds: 10
     max_consecutive_failures: 5
