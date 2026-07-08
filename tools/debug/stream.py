@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import cv2
 
 
@@ -14,7 +15,9 @@ class CameraStream:
 
     def open(self) -> bool:
         src = int(self._source) if str(self._source).isdigit() else self._source
-        self._cap = cv2.VideoCapture(src)
+        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+        self._cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self._cap.isOpened():
             print(f"ERROR  cannot open source: {self._source}")
             return False
