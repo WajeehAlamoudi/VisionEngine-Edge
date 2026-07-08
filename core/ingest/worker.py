@@ -92,7 +92,7 @@ class IngestWorker:
             if success:
                 await self._buffer.mark_sent([r.id for r in batch])
                 self._consecutive_failures = 0
-                log.debug("ingest: sent %d rows → '%s'", len(batch), table)
+                log.info("ingest: flushed %d row(s) → '%s'", len(batch), table)
             else:
                 await self._buffer.mark_failed([r.id for r in batch])
                 self._consecutive_failures += 1
