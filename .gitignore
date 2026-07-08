@@ -21,6 +21,16 @@ logs/
 collected/
 health.json
 
+# Deployment config — contains credentials and device-specific values.
+# Copy from config/config_sample/ and fill in. Never commit real values.
+config/api.yaml
+config/device.yaml
+config/models.yaml
+config/cameras.yaml
+config/rules.yaml
+config/notifications.yaml
+config/collection.yaml
+
 # Models (large binary files — store separately)
 *.pt
 *.onnx
