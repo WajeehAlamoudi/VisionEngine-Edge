@@ -68,12 +68,16 @@ class CameraPipeline:
 
     @staticmethod
     def _open_cap(source: str) -> cv2.VideoCapture:
-        # Force TCP transport for RTSP — avoids UDP packet loss that causes HEVC
-        # PPS/RPS decode errors with H.265 streams. One-time env set is fine because
-        # every RTSP camera on the device benefits from TCP reliability.
+        # Force TCP transport for RTSP — avoids UDP packet loss that causes H.264
+        # MB decode errors. One-time env set is fine because every RTSP camera on
+        # the device benefits from TCP reliability.
         os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
         cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Drain startup frames so the decoder locks onto a clean keyframe before
+        # inference begins — same technique as debug/stream.py.
+        for _ in range(30):
+            cap.grab()
         return cap
 
     async def run(self) -> None:
@@ -123,6 +127,11 @@ class CameraPipeline:
                     log.error("camera '%s': inference error: %s", self._cam.id, exc)
                     continue
 
+                log.debug(
+                    "camera '%s': frame %d — %d detection(s): %s",
+                    self._cam.id, self.frames_processed, len(results),
+                    [(r.class_name, round(r.confidence, 2)) for r in results] if results else "none",
+                )
                 await self._process(results, cap_ts, frame_w, frame_h)
 
                 if self._collector:
