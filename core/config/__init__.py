@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 
-from .analytics import AnalyticsConfig
 from .api import ApiConfig, parse as _parse_api
 from .camera import CameraConfig, parse as _parse_camera
 from .collection import CollectionConfig, parse as _parse_collection
@@ -19,7 +18,6 @@ from .rule import RuleConfig, parse as _parse_rule
 # re-export all dataclasses so callers only need: from core.config import XxxConfig
 __all__ = [
     "AppConfig", "load_config",
-    "AnalyticsConfig",
     "ApiConfig", "IngestConfig", "RequestConfig",
     "CameraConfig", "Zone", "RoutingEntry",
     "CollectionConfig", "CollectionSession",
@@ -218,7 +216,7 @@ def load_config(config_dir: Path | str = "config") -> AppConfig:
     device = _parse_device(_load_yaml(d / "device.yaml")["device"])
     api = _parse_api(_load_yaml(d / "api.yaml")["api"])
     models = {m["id"]: _parse_model(m) for m in _load_yaml(d / "models.yaml")["models"]}
-    cameras = [_parse_camera(c, device.fps_target, device.analytics) for c in _load_yaml(d / "cameras.yaml")["cameras"]]
+    cameras = [_parse_camera(c, device.fps_target) for c in _load_yaml(d / "cameras.yaml")["cameras"]]
     rules = [_parse_rule(r) for r in _load_yaml(d / "rules.yaml")["rules"]]
     notifications = _parse_notifications(_load_yaml(d / "notifications.yaml")["notifications"])
     collection = _parse_collection(_load_yaml(d / "collection.yaml")["collection"])

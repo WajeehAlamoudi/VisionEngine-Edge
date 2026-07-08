@@ -22,16 +22,3 @@ device:
     max_size_mb: 200
     retry_interval_seconds: 10
     delete_after_hours: 24
-
-  analytics:
-    raw: true
-    dwell: false
-    occupancy: false
-    trajectory: false
-    crossing: false
-    tracker: "./config/botsort.yaml"
-    dwell_table: ""
-    occupancy_table: ""
-    trajectory_table: ""
-    dwell_timeout_seconds: 30
-    trajectory_interval_seconds: 10

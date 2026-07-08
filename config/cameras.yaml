@@ -8,20 +8,10 @@ cameras:
     classes: []               # [] = all classes the model can detect
     confidence_threshold:     # leave empty to use model default
     raw_table: ""             # single table for all detections — use this OR routing, not both
-    # routing:                # uncomment to route different classes to different tables
+    # routing:
     #   - classes: []
     #     raw_table: ""
-    summary_table: ""
-    summary_interval_seconds: 60
     zones: []                 # [] = full frame | define polygons to tag detections by zone
     # zones:
     #   - name: ""
     #     polygon: [[0,0],[640,0],[640,480],[0,480]]
-    analytics:
-      raw: true
-      dwell: false
-      occupancy: false
-      trajectory: false
-      dwell_table: ""
-      occupancy_table: ""
-      trajectory_table: ""

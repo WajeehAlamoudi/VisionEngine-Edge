@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import defaultdict
 
 import cv2
 
-from core.analytics import AnalyticsEngine
 from core.buffer import Buffer
+from core.collector import Collector
 from core.config import CameraConfig
 from core.ingest import IngestWorker
 from core.model import ModelRunner
@@ -25,11 +24,10 @@ class CameraPipeline:
     Per-camera processing loop.
 
     Frame flow per inference cycle:
-      capture → fps throttle → inference / tracking (thread pool)
+      capture → fps throttle → inference (thread pool)
         → enrich (DetectionEvent) → rules filter+tag
-        → analytics engine (raw store, dwell, occupancy, trajectory)
-        → alerts → buffer write
-        → (every summary_interval_seconds) → summary flush + analytics periodic flush
+        → detection row → notification row (if rule fires)
+        → buffer write → ingest trigger
     """
 
     def __init__(
@@ -44,26 +42,20 @@ class CameraPipeline:
             batch_size: int,
             collector=None,
     ) -> None:
-        self._cam = cam
-        self._runner = runner
-        self._buffer = buffer
-        self._rules = rules
+        self._cam      = cam
+        self._runner   = runner
+        self._buffer   = buffer
+        self._rules    = rules
         self._notifier = notifier
-        self._ingest = ingest
+        self._ingest   = ingest
         self._device_id = device_id
         self._batch_size = batch_size
-        self._collector = collector
-        self._analytics  = AnalyticsEngine(cam)
-        self._raw_table  = cam.raw_table
-        self._routing    = cam.routing
-        self._raw_enabled = cam.analytics.raw
+        self._collector  = collector
         self._stop = asyncio.Event()
         self._rows_since_trigger = 0
 
-        # summary accumulator (ALL detections, pre-filter) → summary_table
-        self._summary: dict[tuple[str, str], dict] = defaultdict(
-            lambda: {"count": 0, "total_conf": 0.0}
-        )
+        self._raw_table   = cam.raw_table
+        self._routing     = cam.routing
 
         # health stats — read by HealthReporter
         self.detections_total = 0
@@ -76,13 +68,10 @@ class CameraPipeline:
     async def run(self) -> None:
         loop = asyncio.get_event_loop()
         frame_interval = 1.0 / self._cam.fps_target
-        last_inference = 0.0
-        last_summary = time.time()
 
         log.info(
-            "camera '%s': starting  source=%s  fps_target=%d  model=%s  tracker=%s",
-            self._cam.id, self._cam.source, self._cam.fps_target,
-            self._cam.model_id, self._cam.analytics.needs_tracker,
+            "camera '%s': starting  source=%s  fps_target=%d  model=%s",
+            self._cam.id, self._cam.source, self._cam.fps_target, self._cam.model_id,
         )
 
         cap = await loop.run_in_executor(None, cv2.VideoCapture, self._cam.source)
@@ -93,18 +82,16 @@ class CameraPipeline:
 
         frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        last_inference = 0.0
 
         try:
             while not self._stop.is_set():
-                # grab timestamp at read time — not after inference
                 cap_ts = _utcnow()
                 ret, frame = await loop.run_in_executor(None, cap.read)
 
                 if not ret:
                     self.last_error = "frame read failed"
-                    log.warning(
-                        "camera '%s': failed to read frame — retrying in 2s", self._cam.id
-                    )
+                    log.warning("camera '%s': failed to read frame — retrying in 2s", self._cam.id)
                     await asyncio.sleep(2.0)
                     continue
 
@@ -130,14 +117,6 @@ class CameraPipeline:
                 if self._collector:
                     await self._collector.on_frame(self._cam.id, frame, results, cap_ts)
 
-                if now - last_summary >= self._cam.summary_interval_seconds:
-                    flush_ts = _utcnow()
-                    await self._flush_summary(flush_ts)
-                    analytics_rows = self._analytics.flush_periodic(flush_ts)
-                    if analytics_rows:
-                        await self._buffer.write(analytics_rows)
-                    last_summary = now
-
         finally:
             await loop.run_in_executor(None, cap.release)
             log.info("camera '%s': stopped", self._cam.id)
@@ -152,32 +131,23 @@ class CameraPipeline:
             frame_h: int,
     ) -> None:
         detection_rows:    list[dict] = []
-        analytics_rows:    list[dict] = []
         notification_rows: list[dict] = []
 
         for inf in results:
             # 1. Enrich — raw InferenceResult → full DetectionEvent
             event = enrich(inf, self._cam, frame_w, frame_h, capture_ts)
 
-            # 2. Summary accumulator — all detections, before rules filter
-            acc = self._summary[(event.zone, event.class_name)]
-            acc["count"] += 1
-            acc["total_conf"] += event.confidence
-
-            # 3. Rules — filter irrelevant detections, tag relevant ones
+            # 2. Rules — filter irrelevant detections, tag relevant ones
             matches = self._rules.filter_and_tag(event)
             if matches is None:
                 continue    # no rule matched → discard
 
-            # 4. Raw detection rows
-            raw_table = self._route_table(event.class_name) if self._raw_enabled else None
+            # 3. Detection row
+            raw_table = self._route_table(event.class_name)
             if raw_table:
                 detection_rows.append({"table": raw_table, "row": detection_row(event)})
 
-            # 5. Analytics rows (dwell, occupancy, trajectory)
-            analytics_rows.extend(self._analytics.process(event))
-
-            # 6. Notification rows
+            # 4. Notification rows
             if matches:
                 await self._notifier.notify(matches)
                 for match in matches:
@@ -190,7 +160,7 @@ class CameraPipeline:
             self.detections_total += 1
             self.last_error = None
 
-        rows = [*detection_rows, *analytics_rows, *notification_rows]
+        rows = [*detection_rows, *notification_rows]
         if not rows:
             return
 
@@ -207,28 +177,3 @@ class CameraPipeline:
             if not entry.classes or class_name in entry.classes:
                 return entry.raw_table
         return None
-
-    async def _flush_summary(self, ts: str) -> None:
-        if not self._cam.summary_table:
-            self._summary.clear()
-            return
-
-        rows = [
-            {
-                "table": self._cam.summary_table,
-                "row": {
-                    "camera_id":      self._cam.id,
-                    "zone":           zone,
-                    "class":          class_name,
-                    "count":          acc["count"],
-                    "avg_confidence": round(acc["total_conf"] / acc["count"], 4),
-                    "ts":             ts,
-                },
-            }
-            for (zone, class_name), acc in self._summary.items()
-            if acc["count"] > 0
-        ]
-        self._summary.clear()
-
-        if rows:
-            await self._buffer.write(rows)
