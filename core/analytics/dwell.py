@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 from core.rules import DetectionEvent
+from .rows import dwell_row
 from .types import DwellRecord
 
 
@@ -70,12 +71,5 @@ class DwellTracker:
         track_id, class_name = key
         return {
             "table": self._table,
-            "row": {
-                "camera_id":  self._camera_id,
-                "track_id":   track_id,
-                "class":      class_name,
-                "zone":       rec.zone,
-                "entry_ts":   rec.entry_ts,
-                "exit_ts":    exit_ts,
-            },
+            "row":   dwell_row(self._camera_id, track_id, class_name, rec.zone, rec.entry_ts, exit_ts),
         }

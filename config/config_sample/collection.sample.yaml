@@ -1,0 +1,157 @@
+collection:
+  # ── what collection does ────────────────────────────────────────────────────
+  # Collection is a dataset-building tool that runs alongside the main pipeline.
+  # It samples and saves camera frames to local disk based on filters you define.
+  #
+  # Use cases:
+  #   - Build a labeled dataset for fine-tuning a YOLO model on a specific site
+  #   - Capture edge cases (low confidence, rare classes) for manual review
+  #   - Audit model performance in specific zones at specific times
+  #   - Collect frames for a new class the model does not yet detect
+  #
+  # Collection does NOT affect the main detection pipeline.
+  # It runs as a parallel observer — frames are shared from the camera stream,
+  # not captured separately. No additional camera load.
+  #
+  # Run modes:
+  #   Alongside the main pipeline:   python main.py   (collection runs if enabled: true)
+  #   Standalone CLI (no ingest):    python collect.py --session <session_id>
+  #
+  # Output structure per session:
+  #   ./collected/<session_id>/
+  #       2026-06-22_08-14-33_cam01.jpg           annotated frame (with bounding boxes)
+  #       2026-06-22_08-14-33_cam01_raw.jpg       clean frame (no annotations)
+  #       2026-06-22_08-14-33_cam01.json          detection metadata sidecar
+  #
+  # JSON sidecar format:
+  # {
+  #   "session":   "entrance-morning",
+  #   "camera":    "cam-01",
+  #   "ts":        "2026-06-22T08:14:33Z",
+  #   "detections": [
+  #     { "class": "person", "confidence": 0.91, "bbox": [x,y,w,h], "zone": "entrance" }
+  #   ]
+  # }
+
+
+  # ── global output directory ─────────────────────────────────────────────────
+  # Root folder where all session subfolders are created.
+  # Use a persistent path — not /tmp.
+  #
+  - output_dir: "./collected"
+
+    # ── sessions ────────────────────────────────────────────────────────────────
+  # Each session is an independent collection job with its own camera, schedule,
+  # sampling rate, and filters. Multiple sessions can run simultaneously.
+  #
+  # Fields:
+  #
+  #   id          Unique session name. Used as the subfolder name under output_dir.
+  #               Convention: <zone>-<time_of_day> or <purpose>
+  #
+  #   camera      Camera id to collect from. Must match an id in cameras.yaml.
+  #
+  #   enabled     true  → session runs when the device starts (or collect.py is called)
+  #               false → session is defined but inactive
+  #
+  #   schedule    Optional time window for collection. All fields are optional and combinable.
+  #   after       Only collect frames after this time (24h format HH:MM).
+  #   before      Only collect frames before this time (24h format HH:MM).
+  #               Omit both to collect at any time of day.
+  #               Example: after: "08:00", before: "10:30" = morning only
+  #
+  #   start_date  Do not collect any frames before this calendar date (YYYY-MM-DD).
+  #               Omit to start collecting immediately when the device boots.
+  #               Example: start_date: "2026-07-01" = do nothing until July 1st
+  #
+  #   end_date    Stop collecting after this calendar date (YYYY-MM-DD), inclusive.
+  #               Omit for no end date — session runs until max_frames is hit or disabled.
+  #               Example: end_date: "2026-07-07" = stop after July 7th
+  #
+  #   You can combine all four:
+  #     after: "08:00"
+  #     before: "10:30"
+  #     start_date: "2026-07-01"
+  #     end_date: "2026-07-07"
+  #   = collect every morning 08:00–10:30, only during the week of July 1–7
+  #
+  #   sampling    Controls how often a frame is saved.
+  #   mode        interval    → save one frame every N seconds
+  #               on_detection → save a frame only when a qualifying detection occurs
+  #               random       → save N frames per minute, chosen at random intervals
+  #
+  #   interval_seconds     Used when mode is "interval". Save one frame every N seconds.
+  #   frames_per_minute    Used when mode is "random". Target N frames per minute.
+  #
+  #   filters     Optional conditions a frame must meet before being saved.
+  #   classes     Only save frames that contain at least one detection of these classes.
+  #               Empty list [] means save any frame regardless of detections.
+  #   min_confidence       Only save frames where at least one detection is above this score.
+  #   min_detections       Minimum number of qualifying detections required in the frame.
+  #
+  #   save        What to write to disk for each saved frame.
+  #   annotated   true → save frame with bounding boxes and class labels drawn on it
+  #   raw         true → save clean frame without any annotations
+  #   metadata    true → save JSON sidecar file with detection details
+  #
+  #   max_frames  Stop collecting after saving this many frames.
+  #               Omit or set to 0 for unlimited collection.
+
+
+  # ── case 1: collect person detections at entrance — morning window, one week only ─
+  # start_date / end_date bound the whole session to a calendar range.
+  # after / before bound the time within each day.
+  # Both apply together: only 08:00–10:30 AND only within July 1–7.
+
+  - id: "entrance-morning"
+    camera: "cam-01"
+    enabled: true
+    schedule:
+      after: "08:00"
+      before: "10:30"
+      start_date: "2026-07-01"    # do not collect before July 1st
+      end_date: "2026-07-07"      # stop after July 7th
+    sampling:
+      mode: "on_detection"
+    filters:
+      classes: ["person"]
+      min_confidence: 0.75
+      min_detections: 1
+    save:
+      annotated: true
+      raw: true
+      metadata: true
+    max_frames: 500
+
+
+  # ── case 2: random sampling all day for general dataset building ─────────────
+  - id: "parking-general"
+    camera: "cam-02"
+    enabled: true
+    sampling:
+      mode: "random"
+      frames_per_minute: 2
+    filters:
+      classes: ["car", "truck"]
+      min_confidence: 0.60
+    save:
+      annotated: true
+      raw: true
+      metadata: true
+    max_frames: 0       # unlimited
+
+
+  # ── case 3: fixed interval, clean frames only (for labeling tools) ───────────
+  - id: "lobby-interval"
+    camera: "cam-03"
+    enabled: false
+    sampling:
+      mode: "interval"
+      interval_seconds: 10
+    filters:
+      classes: []         # save any frame, regardless of what is detected
+    save:
+      annotated: false    # no boxes — suitable for import into labeling tools
+      raw: true
+      metadata: true
+    max_frames: 200

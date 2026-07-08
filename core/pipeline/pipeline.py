@@ -15,7 +15,7 @@ from core.model import ModelRunner
 from core.notifier import Notifier
 from core.rules import RulesEngine
 from .enricher import enrich
-from .rows import _utcnow, notification_row
+from .rows import _utcnow, detection_row, notification_row
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +53,10 @@ class CameraPipeline:
         self._device_id = device_id
         self._batch_size = batch_size
         self._collector = collector
-        self._analytics = AnalyticsEngine(cam)
+        self._analytics  = AnalyticsEngine(cam)
+        self._raw_table  = cam.raw_table
+        self._routing    = cam.routing
+        self._raw_enabled = cam.analytics.raw
         self._stop = asyncio.Event()
         self._rows_since_trigger = 0
 
@@ -148,7 +151,9 @@ class CameraPipeline:
             frame_w: int,
             frame_h: int,
     ) -> None:
-        rows: list[dict] = []
+        detection_rows:    list[dict] = []
+        analytics_rows:    list[dict] = []
+        notification_rows: list[dict] = []
 
         for inf in results:
             # 1. Enrich — raw InferenceResult → full DetectionEvent
@@ -164,15 +169,20 @@ class CameraPipeline:
             if matches is None:
                 continue    # no rule matched → discard
 
-            # 4. Analytics (raw store, dwell, occupancy, trajectory)
-            rows.extend(self._analytics.process(event))
+            # 4. Raw detection rows
+            raw_table = self._route_table(event.class_name) if self._raw_enabled else None
+            if raw_table:
+                detection_rows.append({"table": raw_table, "row": detection_row(event)})
 
-            # 5. Notifications
+            # 5. Analytics rows (dwell, occupancy, trajectory)
+            analytics_rows.extend(self._analytics.process(event))
+
+            # 6. Notification rows
             if matches:
                 await self._notifier.notify(matches)
                 for match in matches:
                     if match.rule.notifications_table:
-                        rows.append({
+                        notification_rows.append({
                             "table": match.rule.notifications_table,
                             "row":   notification_row(match),
                         })
@@ -180,6 +190,7 @@ class CameraPipeline:
             self.detections_total += 1
             self.last_error = None
 
+        rows = [*detection_rows, *analytics_rows, *notification_rows]
         if not rows:
             return
 
@@ -188,6 +199,14 @@ class CameraPipeline:
         if self._rows_since_trigger >= self._batch_size:
             self._ingest.trigger()
             self._rows_since_trigger = 0
+
+    def _route_table(self, class_name: str) -> str | None:
+        if self._raw_table:
+            return self._raw_table
+        for entry in self._routing:
+            if not entry.classes or class_name in entry.classes:
+                return entry.raw_table
+        return None
 
     async def _flush_summary(self, ts: str) -> None:
         if not self._cam.summary_table:

@@ -1,0 +1,137 @@
+rules:
+  # ── what rules do ───────────────────────────────────────────────────────────
+  # Rules have two jobs:
+  #
+  #   1. FILTER — define which detections are relevant to this deployment.
+  #               Any detection that matches no rule is discarded before analytics.
+  #               This is how you scope analytics to what matters:
+  #               "only track persons in these zones on these cameras."
+  #
+  #   2. NOTIFY — optionally fire a webhook notification and write a notification row.
+  #               Controlled by the `notify` field (default: true).
+  #               Set notify: false for rules whose only purpose is filtering —
+  #               the detection still flows to analytics, but nothing is sent.
+  #
+  # If no rules are defined → all detections pass through unfiltered (development mode).
+  #
+  #
+  # Fields:
+  #
+  #   name                  Human-readable label. Shown in logs, notification rows, webhooks.
+  #                         Use underscores. Example: person_in_restricted_area
+  #
+  #   class                 Object class to watch. Must exactly match a class name
+  #                         in the model used by the target cameras.
+  #
+  #   cameras               Which camera IDs this rule applies to.
+  #                         [] = all cameras (universal convention).
+  #                         [cam-01, cam-03] = only those cameras.
+  #                         Startup validation warns if a listed camera ID does not exist.
+  #
+  #   zones                 Zone names to watch.
+  #                         [] = all zones on the matched cameras.
+  #                         [zone_a, zone_b] = detection in ANY of them matches.
+  #
+  #   min_confidence        Additional confidence floor for this rule only.
+  #                         Stacks on top of the camera/model confidence threshold.
+  #                         Omit to use the effective camera floor.
+  #
+  #   cooldown_seconds      After this rule fires a notification on camera X in zone Y,
+  #                         suppress further notifications for that same camera+zone for N seconds.
+  #                         Does NOT affect filtering — detection still passes to analytics.
+  #                         Set to 0 or omit for no cooldown.
+  #
+  #   notify                true  → rule fires webhook + writes notification row (default)
+  #                         false → filter-only — detection passes to analytics silently.
+  #                                 Use this when you have no notification backend yet, or when
+  #                                 the rule exists purely to define what's worth tracking.
+  #
+  #   severity              Written into the notification row. Drives dashboard colors.
+  #                           critical → red    — immediate action required
+  #                           warning  → amber  — attention needed
+  #                           info     → blue   — informational
+  #
+  #   notifications_table   Table where notification rows are inserted (one row per notification fired).
+  #                         Row: rule_name, class, camera_id, zone, confidence, severity, message, ts
+  #                         Omit to skip writing to the notifications table.
+  #                         Has no effect when notify: false.
+  #
+  #   message               Text written into the notification row and webhook payload.
+  #                         Placeholders: {class}, {zone}, {camera}, {confidence}
+  #
+  #   enabled               false → rule is ignored completely (not used for filtering either)
+
+
+  # ── filter-only rules (notify: false) ───────────────────────────────────────
+  # These define what is worth tracking for analytics.
+  # No webhook fired, no notification row written — pure filter + pass to analytics.
+  # Use this pattern when you don't have a notification backend yet, or when the
+  # rule's purpose is occupancy / dwell / trajectory tracking, not notifying.
+
+  - name: track_persons_entrance
+    class: person
+    cameras: [cam-01]             # only applies to the entrance camera
+    zones: [main_entrance]
+    min_confidence: 0.75
+    notify: false                 # filter-only — passes to dwell/occupancy analytics silently
+    enabled: true
+
+  - name: track_persons_parking
+    class: person
+    cameras: [cam-02]
+    zones: [parking_zone_a, parking_entrance]
+    min_confidence: 0.70
+    notify: false
+    enabled: true
+
+  - name: track_vehicles_parking
+    class: car
+    cameras: [cam-02]
+    zones: [parking_zone_a, parking_entrance]
+    min_confidence: 0.70
+    notify: false
+    enabled: true
+
+
+  # ── notification rules ───────────────────────────────────────────────────────
+  # These fire a webhook and write a notification row in addition to passing the detection.
+  # Use cooldown_seconds to avoid hammering your backend on every frame.
+
+  - name: person_restricted_area
+    class: person
+    cameras: []                   # all cameras — restricted area rule applies everywhere
+    zones: [server_room, back_office]
+    min_confidence: 0.88
+    cooldown_seconds: 15
+    notify: true
+    severity: critical
+    notifications_table: "notifications"
+    message: "Person detected in restricted area: {zone} on {camera}"
+    enabled: true
+
+  - name: truck_on_premises
+    class: truck
+    cameras: []                   # all cameras
+    zones: []                     # any zone
+    min_confidence: 0.70
+    cooldown_seconds: 60
+    notify: true
+    severity: warning
+    notifications_table: "notifications"
+    message: "Truck detected on {camera} in {zone}"
+    enabled: true
+
+
+  # ── disabled rule (preserved for future use) ─────────────────────────────────
+
+  - name: bicycle_anywhere
+    class: bicycle
+    cameras: []
+    zones: []
+    min_confidence: 0.70
+    cooldown_seconds: 30
+    notify: true
+    severity: info
+    notifications_table: "notifications"
+    message: "Bicycle detected on {camera}"
+    enabled: false

@@ -4,6 +4,7 @@ import time
 from collections import defaultdict
 
 from core.rules import DetectionEvent
+from .rows import occupancy_row
 
 
 class OccupancyCounter:
@@ -44,13 +45,7 @@ class OccupancyCounter:
                 if track_ids:
                     rows.append({
                         "table": self._table,
-                        "row": {
-                            "camera_id": self._camera_id,
-                            "zone":      zone,
-                            "class":     class_name,
-                            "count":     len(track_ids),
-                            "ts":        ts,
-                        },
+                        "row":   occupancy_row(self._camera_id, zone, class_name, len(track_ids), ts),
                     })
         return rows
 

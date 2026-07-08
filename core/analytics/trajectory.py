@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 from core.rules import DetectionEvent
+from .rows import trajectory_row
 
 
 class TrajectorySampler:
@@ -34,17 +35,4 @@ class TrajectorySampler:
             return []
 
         self._last_sampled[event.track_id] = now
-        return [{
-            "table": self._table,
-            "row": {
-                "camera_id":     event.camera_id,
-                "track_id":      event.track_id,
-                "class":         event.class_name,
-                "zone":          event.zone,
-                "anchor_x":      event.anchor_x,
-                "anchor_y":      event.anchor_y,
-                "anchor_x_norm": event.anchor_x_norm,
-                "anchor_y_norm": event.anchor_y_norm,
-                "ts":            event.capture_ts,
-            },
-        }]
+        return [{"table": self._table, "row": trajectory_row(event)}]

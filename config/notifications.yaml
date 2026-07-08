@@ -1,81 +1,19 @@
 notifications:
-  # ── what notifications do ───────────────────────────────────────────────────
-  # Notifications define WHERE to send an alert when a rule fires.
-  # Rules in rules.yaml decide WHAT is worth alerting on.
-  # Notifications only define the delivery channel — not the conditions.
-  #
-  # Every rule match goes through ALL enabled channels simultaneously.
-  # One channel failing does not block the others.
-  #
-  # Supported channels:
-  #   log       → writes a structured line to the device log (always enabled, free)
-  #   webhooks  → sends an HTTP POST with the alert payload as JSON
-  #
-  # Webhook payload sent on each alert:
-  # {
-  #   "rule":        "person_restricted_area",
-  #   "class":       "person",
-  #   "camera_id":   "cam-01",
-  #   "camera_name": "Main Entrance",
-  #   "zone":        "server_room",
-  #   "confidence":  0.91,
-  #   "severity":    "critical",
-  #   "message":     "Person detected in restricted area: server_room",
-  #   "device_id":   "node-mall-01",
-  #   "ts":          "2026-06-22T08:14:33Z"
-  # }
-
-
-  # ── log channel ─────────────────────────────────────────────────────────────
-  # Writes every alert as a structured log line on the device.
-  # Always fast — no network call. Use as a baseline even if webhooks are enabled.
-  # Visible via: journalctl -u visionengine-edge -f
-  #
   log:
     enabled: true
 
-
-  # ── webhook channels ────────────────────────────────────────────────────────
-  # Any number of webhooks can be defined.
-  # Each fires independently — one failure does not block the others.
-  #
-  # Fields:
-  #   name      Label used in logs to identify which webhook fired or failed.
-  #   url       Full HTTP/HTTPS URL to POST the alert payload to.
-  #             Must accept: POST, Content-Type: application/json
-  #   enabled   true/false — disable without deleting.
-  #   timeout_seconds
-  #             Seconds to wait for a response before treating as failed.
-  #             Failed webhooks are logged but do not block the pipeline.
-  #             Detection data is still ingested regardless of webhook outcome.
-  #
   webhooks:
-
-    # Slack incoming webhook
-    # Setup: Slack workspace → Apps → Incoming Webhooks → Add
-    # The URL looks like: https://hooks.slack.com/services/T.../B.../...
-    - name: slack
-      url: YOUR_SLACK_WEBHOOK_URL
-      enabled: false
-      timeout_seconds: 5
-
-    # Microsoft Teams incoming webhook
-    - name: teams
-      url: YOUR_TEAMS_WEBHOOK_URL
-      enabled: false
-      timeout_seconds: 5
-
-    # VisionEngine backend — receives notifications and broadcasts to the frontend via WebSocket.
-    # Set url to: {api.url}/notifications/webhook  (same base as your ingest URL)
-    # The edge authenticates with the X-API-Key from api.yaml — no extra config needed.
     - name: visionengine
-      url: YOUR_API_URL/api/v1/notifications/webhook
+      url: ""                 # {api.url}/api/v1/notifications/webhook
       enabled: false
       timeout_seconds: 5
 
-    # Custom endpoint — any server that accepts POST + JSON
-    # Useful for integrating with your own systems or third-party platforms
-    - name: custom
-      url: YOUR_CUSTOM_WEBHOOK_URL
-      enabled: false
-      timeout_seconds: 5
+    # - name: slack
+    #   url: ""
+    #   enabled: false
+    #   timeout_seconds: 5
+
+    # - name: custom
+    #   url: ""
+    #   enabled: false
+    #   timeout_seconds: 5
