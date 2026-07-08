@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 
 import cv2
@@ -65,6 +66,16 @@ class CameraPipeline:
     def stop(self) -> None:
         self._stop.set()
 
+    @staticmethod
+    def _open_cap(source: str) -> cv2.VideoCapture:
+        # Force TCP transport for RTSP — avoids UDP packet loss that causes HEVC
+        # PPS/RPS decode errors with H.265 streams. One-time env set is fine because
+        # every RTSP camera on the device benefits from TCP reliability.
+        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return cap
+
     async def run(self) -> None:
         loop = asyncio.get_event_loop()
         frame_interval = 1.0 / self._cam.fps_target
@@ -74,7 +85,7 @@ class CameraPipeline:
             self._cam.id, self._cam.source, self._cam.fps_target, self._cam.model_id,
         )
 
-        cap = await loop.run_in_executor(None, cv2.VideoCapture, self._cam.source)
+        cap = await loop.run_in_executor(None, self._open_cap, self._cam.source)
         if not cap.isOpened():
             self.last_error = f"failed to open source: {self._cam.source}"
             log.error("camera '%s': %s", self._cam.id, self.last_error)
