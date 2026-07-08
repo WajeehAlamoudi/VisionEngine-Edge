@@ -13,16 +13,24 @@ notifications:
   #
   # Webhook payload sent on each alert:
   # {
-  #   "rule":        "person_restricted_area",
-  #   "class":       "person",
-  #   "camera_id":   "cam-01",
-  #   "camera_name": "Main Entrance",
-  #   "zone":        "server_room",
-  #   "confidence":  0.91,
-  #   "severity":    "critical",
-  #   "message":     "Person detected in restricted area: server_room",
-  #   "device_id":   "node-mall-01",
-  #   "ts":          "2026-06-22T08:14:33Z"
+  #   "rule_name":     "person_restricted_area",
+  #   "severity":      "critical",
+  #   "message":       "Person detected in restricted area: server_room",
+  #   "branch_id":     "...",
+  #   "device_id":     "node-mall-01",
+  #   "camera_id":     "cam-01",
+  #   "camera_name":   "Main Entrance",
+  #   "model_id":      "person_detector",
+  #   "track_id":      null,
+  #   "class":         "person",
+  #   "confidence":    0.91,
+  #   "zone":          "server_room",
+  #   "bbox_x1": 120,  "bbox_y1": 80,  "bbox_x2": 260,  "bbox_y2": 420,
+  #   "bbox_w":  140,  "bbox_h":  340,
+  #   "anchor_x": 190.0,       "anchor_y": 420.0,
+  #   "anchor_x_norm": 0.297,  "anchor_y_norm": 0.875,
+  #   "frame_w": 640,  "frame_h": 480,
+  #   "ts":            "2026-06-22T08:14:33Z"
   # }
 
 

@@ -128,7 +128,7 @@ def _validate(cfg: AppConfig) -> None:
         if cam.raw_table and cam.routing:
             errors.append(f"{p}: use raw_table OR routing, not both")
 
-        if not cam.raw_table and not cam.routing and cam.analytics.raw:
+        if not cam.raw_table and not cam.routing:
             warnings.append(
                 f"{p}: no raw_table or routing defined — detections will not be stored"
             )

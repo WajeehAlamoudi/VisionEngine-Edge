@@ -100,17 +100,6 @@ cameras:
   #                   - classes: []             # all remaining classes → default table
   #                     raw_table: "detections"
   #
-  #   summary_table         Table where periodic summary rows are inserted.
-  #                         One row per interval (see summary_interval_seconds).
-  #                         Contains: camera_id, zone, class, count, avg_confidence, ts
-  #                         Single summary table regardless of routing — summary always
-  #                         contains a class column so filtering works at query time.
-  #                         Omit to disable summary ingestion for this camera.
-  #
-  #   summary_interval_seconds
-  #               How often to push a summary row to summary_table.
-  #               Recommended: 30–300 seconds.
-  #
   # ── zones ─────────────────────────────────────────────────────────────────────
   #
   #   zones       List of detection zones for this camera.
@@ -125,6 +114,19 @@ cameras:
   #                 polygon   List of [x, y] pixel coordinates forming a closed polygon.
   #                           Minimum 3 points. Coordinates are relative to the camera
   #                           frame resolution (e.g. [0,0] is top-left, [640,480] is bottom-right).
+  #                           Use tools/debug.py --mode zones to draw zones interactively.
+  #
+  # ── tracker ───────────────────────────────────────────────────────────────────
+  #
+  #   use_tracker true  → BoT-SORT tracker enabled — track_id populated per object,
+  #                        allowing you to follow the same person across frames.
+  #                        Each camera with use_tracker: true gets its own dedicated
+  #                        model instance (tracker state cannot be shared).
+  #               false → stateless predict — track_id is always null (default).
+  #                        Cameras sharing the same model_id share one model instance.
+  #
+  #   Tracker algorithm is set device-wide via tracker: in device.yaml.
+  #   Built-ins (no download needed): "botsort.yaml" | "bytetrack.yaml"
 
 
   # ── case 1: entrance camera — single table (simple) ─────────────────────────
@@ -139,17 +141,10 @@ cameras:
     model_id: person_detector         # → models.yaml id: person_detector
     classes: [person]
     confidence_threshold: 0.75        # stricter than model's 0.60 default
-    raw_table: "detections"           # simple: one table for all classes
-    summary_table: "occupancy"
-    summary_interval_seconds: 30
+    raw_table: "person_detections"
     zones:
       - name: main_entrance
         polygon: [[0,0],[640,0],[640,480],[0,480]]
-    # analytics override — enable dwell tracking for this camera
-    # inherits device defaults for everything else
-    analytics:
-      dwell: true     # track how long each person stays in main_entrance zone
-                      # automatically enables ByteTrack tracker for this camera
 
 
   # ── case 2: parking lot — routing (class-based table split) ─────────────────
@@ -171,18 +166,11 @@ cameras:
       - classes: [car, truck]
         raw_table: "vehicle_detections"
       # no catch-all needed — all active classes above are covered
-    summary_table: "parking_summary"
-    summary_interval_seconds: 60
     zones:
       - name: parking_zone_a
         polygon: [[0,0],[320,0],[320,480],[0,480]]
       - name: parking_entrance
         polygon: [[320,0],[640,0],[640,480],[320,480]]
-    # analytics override — occupancy + trajectory for parking analytics
-    analytics:
-      occupancy: true     # snapshot: how many persons/cars in each zone every 60s
-      trajectory: true    # sample positions for heatmap generation
-      trajectory_interval_seconds: 5   # sample more frequently than device default
 
 
   # ── case 3: lobby — general model, all classes, no zone filter ──────────────
@@ -197,8 +185,6 @@ cameras:
     model_id: general_coco            # → models.yaml id: general_coco
     # classes omitted → processes all classes in general_coco: person, bicycle, car, etc.
     raw_table: "detections"
-    summary_table: "occupancy"
-    summary_interval_seconds: 30
     zones: []
 
 

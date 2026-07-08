@@ -1,3 +1,17 @@
+# ── default 3-table setup ────────────────────────────────────────────────────
+#
+#   detections    one row per detection — all classes, all cameras
+#                 driven by raw_table below
+#
+#   notifications one row per alert fired
+#                 driven by notifications_table in rules.yaml
+#
+#   nodes         one heartbeat row per interval — device health/pulse
+#                 driven by heartbeat.table in device.yaml
+#
+# For full field reference see config/config_sample/cameras.sample.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
 cameras:
   - id: ""
     name: ""
@@ -7,10 +21,7 @@ cameras:
     model_id: ""              # must match an id in models.yaml
     classes: []               # [] = all classes the model can detect
     confidence_threshold:     # leave empty to use model default
-    raw_table: ""             # single table for all detections — use this OR routing, not both
-    # routing:
-    #   - classes: []
-    #     raw_table: ""
+    raw_table: "detections"   # all detections → detections table
     zones: []                 # [] = full frame | define polygons to tag detections by zone
     # zones:
     #   - name: ""

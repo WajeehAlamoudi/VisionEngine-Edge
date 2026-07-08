@@ -34,6 +34,7 @@ class DeviceConfig:
     fps_target: int
     max_cameras: int
     log_level: str          # DEBUG | INFO | WARNING | ERROR
+    tracker: str            # tracker config — "botsort.yaml" | "bytetrack.yaml" | custom path
     heartbeat: HeartbeatConfig
     health_file: HealthFileConfig
     buffer: BufferConfig
@@ -52,6 +53,7 @@ def parse(raw: dict) -> DeviceConfig:
         fps_target=raw.get("fps_target", 5),
         max_cameras=raw.get("max_cameras", 4),
         log_level=raw.get("log_level", "INFO"),
+        tracker=raw.get("tracker", "botsort.yaml"),
         heartbeat=HeartbeatConfig(
             enabled=hb.get("enabled", True),
             interval_seconds=hb.get("interval_seconds", 60),

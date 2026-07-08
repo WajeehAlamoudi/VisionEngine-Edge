@@ -39,7 +39,7 @@ async def run(config_dir: str) -> None:
     await buffer.start()
 
     registry = ModelRegistry()
-    registry.load_for_cameras(cfg.models, cfg.enabled_cameras)
+    registry.load_for_cameras(cfg.models, cfg.enabled_cameras, tracker=cfg.device.tracker)
 
     rules = RulesEngine(cfg.enabled_rules)
     notifier = Notifier(cfg)

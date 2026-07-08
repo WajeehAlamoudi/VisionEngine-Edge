@@ -13,6 +13,7 @@ class ModelConfig:
     confidence_threshold: float
     iou_threshold: float
     input_size: list[int]   # [width, height]
+    use_tracker: bool        # true = BoT-SORT tracker ON → track_id populated per object
 
 
 def parse(raw: dict) -> ModelConfig:
@@ -26,4 +27,5 @@ def parse(raw: dict) -> ModelConfig:
         confidence_threshold=float(raw.get("confidence_threshold", 0.5)),
         iou_threshold=float(raw.get("iou_threshold", 0.45)),
         input_size=raw.get("input_size", [640, 640]),
+        use_tracker=bool(raw.get("use_tracker", False)),
     )

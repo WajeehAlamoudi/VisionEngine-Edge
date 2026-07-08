@@ -8,15 +8,15 @@ from core.config import RuleConfig
 @dataclass
 class DetectionEvent:
     """
-    Fully enriched detection — the central contract of the analytics pipeline.
+    Fully enriched detection — central contract passed between pipeline stages.
 
     Produced by core/pipeline/enricher.py after inference and zone assignment.
-    Consumed by: rules engine, analytics engine, notifier, buffer.
+    Consumed by: rules engine, notifier, buffer.
 
     All downstream modules work from this object alone — no extra context needed.
     """
     # ── model output ──────────────────────────────────────────────────────────
-    track_id:   int | None     # ByteTrack id; None if tracker not active
+    track_id:   int | None     # always None on edge (no tracker)
     class_name: str
     confidence: float
     bbox:       list[float]    # [x1, y1, x2, y2] absolute pixel coords

@@ -80,6 +80,16 @@ models:
   #   input_size  [width, height] in pixels. Frame is resized to this before inference.
   #               Must match what the model was trained with.
   #               Standard YOLO sizes: [320,320] (fast), [640,640] (balanced), [1280,1280] (accurate)
+  #
+  #   use_tracker true  → BoT-SORT tracker enabled — track_id is populated per object,
+  #                        letting you follow the same object across frames for dwell,
+  #                        trajectory, and re-identification analytics in SQL.
+  #                        Each camera using this model gets its own dedicated model
+  #                        instance (tracker state cannot be shared between cameras).
+  #               false → stateless predict — track_id is always null (default).
+  #                        Cameras sharing this model_id share one model instance (RAM efficient).
+  #
+  #   Tracker algorithm is set device-wide via tracker: in device.yaml.
 
 
   # ── model 1: general purpose — full COCO pretrained ─────────────────────────
@@ -101,6 +111,7 @@ models:
     confidence_threshold: 0.5
     iou_threshold: 0.45
     input_size: [640, 640]
+    use_tracker: false
 
 
   # ── model 2: person-only fine-tuned ─────────────────────────────────────────
@@ -117,6 +128,7 @@ models:
     confidence_threshold: 0.6
     iou_threshold: 0.45
     input_size: [640, 640]
+    use_tracker: false
 
 
   # ── model 3: vehicle-only ────────────────────────────────────────────────────
@@ -136,6 +148,7 @@ models:
     confidence_threshold: 0.55
     iou_threshold: 0.45
     input_size: [640, 640]
+    use_tracker: false
 
 
   # ── model 4: Hailo compiled (Raspberry Pi + Hailo-8L hat) ───────────────────
@@ -158,3 +171,4 @@ models:
     confidence_threshold: 0.5
     iou_threshold: 0.45
     input_size: [640, 640]
+    use_tracker: false

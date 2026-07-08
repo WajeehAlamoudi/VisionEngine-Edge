@@ -1,3 +1,5 @@
+# For full field reference see config/config_sample/rules.sample.yaml
+
 rules:
   - name: ""
     class: ""                 # must match a class name in models.yaml
@@ -5,8 +7,8 @@ rules:
     zones: []                 # [] = all zones | [zone_a] = specific zones
     min_confidence:           # leave empty to use camera/model default
     cooldown_seconds: 0
-    notify: true              # true = send alert | false = filter-only, analytics only
+    notify: true              # true = send alert | false = filter-only (no notification sent)
     severity: info            # critical | warning | info
-    notifications_table: ""   # leave empty to skip writing notification row to DB
+    notifications_table: "notifications"   # alerts → notifications table
     message: ""               # supports {class} {zone} {camera} {confidence}
     enabled: true

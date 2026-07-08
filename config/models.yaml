@@ -8,3 +8,4 @@ models:
     confidence_threshold: 0.5
     iou_threshold: 0.45
     input_size: [640, 640]
+    use_tracker: false        # true = BoT-SORT tracker ON → track_id populated per object

@@ -21,8 +21,9 @@ class ModelRegistry:
             self,
             models: dict[str, ModelConfig],
             cameras: list[CameraConfig],
+            tracker: str = "botsort.yaml",
     ) -> None:
-        shared: dict[str, ModelRunner] = {}   # model_id → shared runner
+        shared: dict[str, ModelRunner] = {}   # model_id → shared runner (predict-only cameras)
 
         for cam in cameras:
             if cam.model_id not in models:
@@ -30,13 +31,21 @@ class ModelRegistry:
                     f"ModelRegistry: model_id '{cam.model_id}' not found — "
                     f"this should have been caught by config validation"
                 )
-            if cam.model_id not in shared:
-                runner = ModelRunner(models[cam.model_id])
+            model_cfg = models[cam.model_id]
+            if model_cfg.use_tracker:
+                # tracker is stateful — each camera needs its own dedicated runner
+                runner = ModelRunner(model_cfg, use_tracker=True, tracker=tracker)
                 runner.load()
-                shared[cam.model_id] = runner
-                log.info("model '%s' loaded (shared) for camera '%s'", cam.model_id, cam.id)
+                log.info("model '%s' loaded (dedicated+tracker) for camera '%s'", cam.model_id, cam.id)
+            else:
+                # stateless predict — safe to share across cameras using the same model
+                if cam.model_id not in shared:
+                    shared[cam.model_id] = ModelRunner(model_cfg)
+                    shared[cam.model_id].load()
+                    log.info("model '%s' loaded (shared) for camera '%s'", cam.model_id, cam.id)
+                runner = shared[cam.model_id]
 
-            self._runners[cam.id] = shared[cam.model_id]
+            self._runners[cam.id] = runner
 
     def get(self, camera_id: str) -> ModelRunner:
         return self._runners[camera_id]
