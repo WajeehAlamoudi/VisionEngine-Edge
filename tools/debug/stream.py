@@ -1,39 +1,27 @@
 from __future__ import annotations
 
-import json
 import logging
+import os
 import subprocess
+import tempfile
 
 import cv2
-import numpy as np
 
 log = logging.getLogger(__name__)
 
-# Passed to ffprobe and ffmpeg before -i.
-# -err_detect ignore_err reaches AVCodecContext — the only way to tolerate
-# Hikvision H.264+/H.265+ non-standard SPS/VPS that OpenCV cannot reach.
-_RTSP_INPUT_FLAGS = [
+_RTSP_FFMPEG_FLAGS = [
     "-rtsp_transport",  "tcp",
-    "-fflags",          "+discardcorrupt+genpts",
     "-err_detect",      "ignore_err",
     "-probesize",       "50000000",
     "-analyzeduration", "50000000",
 ]
 
-
-def _probe_wh(url: str) -> tuple[int, int]:
-    result = subprocess.run(
-        ["ffprobe", "-v", "quiet",
-         "-rtsp_transport", "tcp",
-         "-select_streams", "v:0",
-         "-show_entries", "stream=width,height",
-         "-of", "json",
-         url],
-        capture_output=True, text=True, timeout=20,
-    )
-    data = json.loads(result.stdout)
-    s = data["streams"][0]
-    return s["width"], s["height"]
+_RTSP_CV2_OPTIONS = (
+    "rtsp_transport;tcp"
+    "|fflags;+discardcorrupt+genpts"
+    "|probesize;50000000"
+    "|analyzeduration;50000000"
+)
 
 
 class CameraStream:
@@ -41,9 +29,7 @@ class CameraStream:
 
     def __init__(self, source: str | int) -> None:
         self._source = source
-        self._cap:  cv2.VideoCapture | None = None   # local device path
-        self._proc: subprocess.Popen | None = None   # RTSP via ffmpeg pipe
-        self._frame_size = 0
+        self._cap: cv2.VideoCapture | None = None
         self.width = 0
         self.height = 0
         self.first_frame = None
@@ -55,7 +41,7 @@ class CameraStream:
     def open(self) -> bool:
         src = int(self._source) if str(self._source).isdigit() else self._source
 
-        # ── local webcam / device ─────────────────────────────────────────────
+        # ── local device ──────────────────────────────────────────────────────
         if not self._is_rtsp():
             self._cap = cv2.VideoCapture(src)
             if not self._cap.isOpened():
@@ -63,7 +49,7 @@ class CameraStream:
                 return False
             ret, frame = self._cap.read()
             if not ret or frame is None:
-                log.warning("no valid frame from device: %s", src)
+                log.error("no frame from device: %s", src)
                 return False
             self.width       = frame.shape[1]
             self.height      = frame.shape[0]
@@ -71,73 +57,62 @@ class CameraStream:
             log.info("device ready  %dx%d", self.width, self.height)
             return True
 
-        # ── RTSP via ffmpeg subprocess ────────────────────────────────────────
-        log.info("probing stream dimensions ...")
-        try:
-            w, h = _probe_wh(src)
-        except Exception as exc:
-            log.error("ffprobe failed: %s", exc)
+        # ── RTSP ─────────────────────────────────────────────────────────────
+        # Step 1: grab one clean frame via ffmpeg -vframes 1 → JPEG.
+        # This reaches AVCodecContext (-err_detect ignore_err) so H.264+/H.265+
+        # non-standard SPS/VPS are tolerated. Much simpler than a raw pipe.
+        log.info("grabbing frame ...")
+        frame = _grab_single_frame(src)
+        if frame is None:
+            log.error("could not grab frame from: %s", src)
             return False
 
-        self.width       = w
-        self.height      = h
-        self._frame_size = w * h * 3
+        self.first_frame = frame
+        self.width       = frame.shape[1]
+        self.height      = frame.shape[0]
+        log.info("frame ready  %dx%d", self.width, self.height)
 
-        cmd = [
-            "ffmpeg",
-            *_RTSP_INPUT_FLAGS,
-            "-i", src,
-            "-vf", f"scale={w}:{h}",
-            "-pix_fmt", "bgr24",
-            "-f", "rawvideo",
-            "pipe:1",
-        ]
+        # Step 2: open cv2.VideoCapture for continuous read() calls.
+        # Viewer and inference_viewer need this; zone_builder releases immediately.
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = _RTSP_CV2_OPTIONS
+        self._cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if not self._cap.isOpened():
+            log.warning("continuous capture unavailable — first_frame still valid")
 
-        log.info("syncing decoder ...")
-        self._proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
-
-        # The decoder may output black frames while recovering from H.264+
-        # SPS errors — drain until we get a frame with actual pixel content.
-        for _ in range(60):
-            raw = self._proc.stdout.read(self._frame_size)
-            if len(raw) < self._frame_size:
-                log.warning("no valid frame decoded from: %s", src)
-                self.release()
-                return False
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape((h, w, 3)).copy()
-            if frame.max() > 10:
-                self.first_frame = frame
-                log.info("decoder synced  %dx%d", w, h)
-                return True
-
-        log.warning("only black frames received from: %s", src)
-        self.release()
-        return False
+        return True
 
     def read(self):
-        if self._cap is not None:
-            ret, frame = self._cap.read()
-            return frame if ret else None
-        if self._proc is not None:
-            raw = self._proc.stdout.read(self._frame_size)
-            if len(raw) < self._frame_size:
-                return None
-            return (
-                np.frombuffer(raw, dtype=np.uint8)
-                .reshape((self.height, self.width, 3))
-                .copy()
-            )
-        return None
+        if self._cap is None:
+            return None
+        ret, frame = self._cap.read()
+        return frame if ret else None
 
     def release(self) -> None:
         if self._cap:
             self._cap.release()
             self._cap = None
-        if self._proc:
-            self._proc.terminate()
-            self._proc.wait()
-            self._proc = None
+
+
+def _grab_single_frame(url: str):
+    """Run ffmpeg -vframes 1 and return the frame as a BGR numpy array."""
+    fd, tmp = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", *_RTSP_FFMPEG_FLAGS, "-i", url,
+             "-vframes", "1", "-q:v", "2", tmp],
+            capture_output=True,
+            timeout=30,
+        )
+        if not os.path.exists(tmp) or os.path.getsize(tmp) == 0:
+            return None
+        return cv2.imread(tmp)
+    except Exception as exc:
+        log.error("ffmpeg grab failed: %s", exc)
+        return None
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
