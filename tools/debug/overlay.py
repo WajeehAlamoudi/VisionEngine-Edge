@@ -12,6 +12,8 @@ CLR_POLY_EDGE   = ( 50, 220, 255)
 CLR_DET_BOX     = ( 50, 220,  50)   # green  — detection bbox
 CLR_DET_LABEL   = ( 50, 220,  50)
 CLR_HUD         = (200, 200, 200)   # light grey — HUD text
+CLR_ACCENT      = (255, 190,  40)   # amber — HUD accent bar (industrial theme)
+CLR_PANEL_TINT  = ( 26,  24,  22)   # warm charcoal — translucent panel base
 
 FONT      = cv2.FONT_HERSHEY_SIMPLEX
 FONT_BOLD = cv2.FONT_HERSHEY_DUPLEX
@@ -27,15 +29,28 @@ def _text(frame, text: str, pos: tuple[int, int], color=CLR_HUD,
     cv2.putText(frame, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
 
 
-def _panel(frame, x: int, y: int, w: int, h: int, alpha: float = 0.82) -> None:
-    """Near-opaque dark rectangle so overlaid text stays crisp and readable."""
+def _panel(frame, x: int, y: int, w: int, h: int,
+           alpha: float = 0.55, accent: str = "left") -> None:
+    """Translucent smoked-glass panel with a thin amber accent bar.
+
+    Blends a warm charcoal tint (not pure black) so the scene stays faintly
+    visible through it — a professional, industrial monitoring look.
+    """
     x2, y2 = min(x + w, frame.shape[1]), min(y + h, frame.shape[0])
     x, y = max(x, 0), max(y, 0)
     if x2 <= x or y2 <= y:
         return
-    roi = frame[y:y2, x:x2]
-    dark = np.zeros_like(roi)
-    cv2.addWeighted(dark, alpha, roi, 1 - alpha, 0, roi)
+
+    roi  = frame[y:y2, x:x2]
+    tint = np.empty_like(roi)
+    tint[:] = CLR_PANEL_TINT
+    cv2.addWeighted(tint, alpha, roi, 1 - alpha, 0, roi)
+
+    bar = max(2, round((y2 - y) * 0.02))
+    if accent == "left":
+        cv2.rectangle(frame, (x, y), (x + bar, y2), CLR_ACCENT, -1)
+    elif accent == "bottom":
+        cv2.rectangle(frame, (x, y2 - bar), (x2, y2), CLR_ACCENT, -1)
 
 
 def _hud_scale(width: int) -> float:
