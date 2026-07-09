@@ -53,19 +53,19 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
     cv2.namedWindow(title)
     cv2.setMouseCallback(title, on_mouse)
 
-    while True:
-        frame = stream.read()
-        if frame is None:
-            print("Stream ended.")
-            break
+    # Grab a static background frame — reused each loop so the tool stays open
+    # even if the RTSP stream drops mid-session (common with H.264+ NVRs).
+    static_frame = stream.read()
+    if static_frame is None:
+        print("ERROR  could not grab a frame to draw on")
+        stream.release()
+        cv2.destroyAllWindows()
+        return
+    stream.release()
+    print("Frame captured — stream closed. Draw your zones, press S to save.\n")
 
-        frame_count += 1
-        now = time.monotonic()
-        elapsed = now - t_last
-        if elapsed >= 0.5:
-            fps = frame_count / elapsed
-            frame_count = 0
-            t_last = now
+    while True:
+        frame = static_frame.copy()
 
         # ── draw layers ───────────────────────────────────────────────────────
         if show_existing and existing_zones:
@@ -80,7 +80,7 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
         draw_controls(frame, CONTROLS)
 
         cv2.imshow(title, frame)
-        key = cv2.waitKey(1) & 0xFF
+        key = cv2.waitKey(50) & 0xFF
 
         if key == ord("q"):
             break
