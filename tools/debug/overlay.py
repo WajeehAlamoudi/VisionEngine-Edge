@@ -18,16 +18,17 @@ FONT_BOLD = cv2.FONT_HERSHEY_DUPLEX
 
 
 def _text(frame, text: str, pos: tuple[int, int], color=CLR_HUD,
-          scale: float = 0.55, thickness: int = 1, font=FONT) -> None:
-    # Symmetric outline (black halo at the same position, then color on top).
-    # Avoids the offset-shadow doubling that appears on downscaled hi-res frames.
+          scale: float = 0.55, thickness: int = 1, font=FONT,
+          outline: bool = True) -> None:
     x, y = pos
-    cv2.putText(frame, text, (x, y), font, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+    if outline:
+        # Symmetric black halo — for labels drawn directly on the image.
+        cv2.putText(frame, text, (x, y), font, scale, (0, 0, 0), thickness + 2, cv2.LINE_AA)
     cv2.putText(frame, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
 
 
-def _panel(frame, x: int, y: int, w: int, h: int, alpha: float = 0.5) -> None:
-    """Semi-transparent dark rectangle so overlaid text stays readable."""
+def _panel(frame, x: int, y: int, w: int, h: int, alpha: float = 0.82) -> None:
+    """Near-opaque dark rectangle so overlaid text stays crisp and readable."""
     x2, y2 = min(x + w, frame.shape[1]), min(y + h, frame.shape[0])
     x, y = max(x, 0), max(y, 0)
     if x2 <= x or y2 <= y:
@@ -62,9 +63,11 @@ def draw_hud(frame, fps: float, width: int, height: int, extras: list[str] | Non
     panel_h = line_h * len(lines) + pad
     _panel(frame, 0, 0, panel_w, panel_h)
 
+    thick = max(1, round(scale * 1.6))
     for i, line in enumerate(lines):
         y = pad + line_h * (i + 1) - int(8 * scale)
-        _text(frame, line, (pad, y), CLR_HUD, scale=scale)
+        _text(frame, line, (pad, y), (255, 255, 255), scale=scale,
+              thickness=thick, outline=False)
 
 
 def draw_zones(frame, zones, alpha: float = 0.15) -> None:
@@ -147,6 +150,8 @@ def draw_controls(frame, lines: list[str]) -> None:
     panel_h = line_h * len(lines) + pad
     _panel(frame, 0, fh - panel_h, panel_w, panel_h)
 
+    thick = max(1, round(scale * 1.4))
     for i, line in enumerate(reversed(lines)):
         y = fh - pad - line_h * i - int(6 * scale)
-        _text(frame, line, (pad, y), CLR_HUD, scale=scale)
+        _text(frame, line, (pad, y), (255, 255, 255), scale=scale,
+              thickness=thick, outline=False)
