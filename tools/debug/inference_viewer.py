@@ -53,24 +53,34 @@ def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference")
 
     fps = 0.0
     inf_times: list[float] = []
+    last_frame = None
+    last_results: list = []
 
     while True:
-        frame = stream.read()
-        if frame is None:
+        f = stream.read()
+        stale = f is None
+        if not stale:
+            last_frame = f
+        elif last_frame is None:
             print("Stream ended.")
             break
 
-        t0 = time.monotonic()
-        try:
-            results = runner.run(frame, cam.classes)
-        except Exception as exc:
-            print(f"Inference error: {exc}")
-            results = []
-        inf_time = time.monotonic() - t0
-        inf_times.append(inf_time)
-        if len(inf_times) > 10:
-            inf_times.pop(0)
-        fps = 1.0 / (sum(inf_times) / len(inf_times)) if inf_times else 0.0
+        frame = last_frame.copy()
+
+        if not stale:
+            t0 = time.monotonic()
+            try:
+                last_results = runner.run(frame, cam.classes)
+            except Exception as exc:
+                print(f"Inference error: {exc}")
+                last_results = []
+            inf_time = time.monotonic() - t0
+            inf_times.append(inf_time)
+            if len(inf_times) > 10:
+                inf_times.pop(0)
+            fps = 1.0 / (sum(inf_times) / len(inf_times)) if inf_times else 0.0
+
+        results = last_results
 
         # ── draw layers ───────────────────────────────────────────────────────
         if show_zones and cam.zones:

@@ -24,14 +24,18 @@ def run(source: str | int, title: str = "VisionEngine - View") -> None:
     fps = 0.0
     t_last = time.monotonic()
     frame_count = 0
+    last_frame = None
 
     while True:
-        frame = stream.read()
-        if frame is None:
+        f = stream.read()
+        if f is not None:
+            last_frame = f
+            frame_count += 1
+        elif last_frame is None:
             print("Stream ended.")
             break
 
-        frame_count += 1
+        frame = last_frame.copy()
         now = time.monotonic()
         elapsed = now - t_last
         if elapsed >= 0.5:
