@@ -100,19 +100,23 @@ class CameraStream:
             stderr=subprocess.DEVNULL,
         )
 
-        raw = self._proc.stdout.read(self._frame_size)
-        if len(raw) < self._frame_size:
-            log.warning("no valid frame decoded from: %s", src)
-            self.release()
-            return False
+        # The decoder may output black frames while recovering from H.264+
+        # SPS errors — drain until we get a frame with actual pixel content.
+        for _ in range(60):
+            raw = self._proc.stdout.read(self._frame_size)
+            if len(raw) < self._frame_size:
+                log.warning("no valid frame decoded from: %s", src)
+                self.release()
+                return False
+            frame = np.frombuffer(raw, dtype=np.uint8).reshape((h, w, 3)).copy()
+            if frame.max() > 10:
+                self.first_frame = frame
+                log.info("decoder synced  %dx%d", w, h)
+                return True
 
-        self.first_frame = (
-            np.frombuffer(raw, dtype=np.uint8)
-            .reshape((h, w, 3))
-            .copy()
-        )
-        log.info("decoder synced  %dx%d", w, h)
-        return True
+        log.warning("only black frames received from: %s", src)
+        self.release()
+        return False
 
     def read(self):
         if self._cap is not None:
