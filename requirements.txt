@@ -1,6 +1,7 @@
 # ── inference ─────────────────────────────────────────────────────────────────
 ultralytics>=8.2.0          # YOLO model loading and inference
 opencv-python>=4.8.0        # camera capture, frame read/write, annotation drawing
+ffmpegcv>=0.3.0             # debug stream capture with codec-level FFmpeg options (H.264+/H.265+ NVR support)
 
 # ── async runtime ─────────────────────────────────────────────────────────────
 aiosqlite>=0.19.0           # async SQLite for local buffer (WAL mode)

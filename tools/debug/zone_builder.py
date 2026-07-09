@@ -56,15 +56,14 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
     cv2.namedWindow(title)
     cv2.setMouseCallback(title, on_mouse)
 
-    # Grab a static background frame — reused each loop so the tool stays open
-    # even if the RTSP stream drops mid-session (common with H.264+ NVRs).
-    static_frame = stream.read()
+    # Use the frame already validated during sync — avoids a second read()
+    # that could land on a green/gray mid-GOP frame.
+    static_frame = stream.first_frame
+    stream.release()
     if static_frame is None:
         log.error("could not grab a frame to draw on")
-        stream.release()
         cv2.destroyAllWindows()
         return
-    stream.release()
     log.info("frame captured - stream closed. draw zones, press S to save.")
 
     while True:
