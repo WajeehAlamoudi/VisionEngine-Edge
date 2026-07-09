@@ -9,7 +9,7 @@ from pathlib import Path
 from core.config import AppConfig, CollectionSession
 from core.model import InferenceResult
 from .filters import _apply_filters, _in_schedule
-from .writer import _filename_stem, _save_files
+from .writer import _filename_stem, _save_files, _write_dataset_yaml
 
 log = logging.getLogger(__name__)
 
@@ -36,17 +36,40 @@ class Collector:
         for session in cfg.enabled_sessions:
             self._by_camera.setdefault(session.camera, []).append(session)
 
+        # per-session class list, taken from the camera's model class list so
+        # label ids stay stable, training-ready, and recorded in data.yaml
+        self._class_names: dict[str, list[str]] = {}
+        self._class_ids: dict[str, dict[str, int]] = {}
+        for session in cfg.enabled_sessions:
+            names: list[str] = []
+            cam = cfg.get_camera(session.camera)
+            if cam:
+                model = cfg.get_model(cam.model_id)
+                if model and model.classes:
+                    names = list(model.classes)
+            self._class_names[session.id] = names
+            self._class_ids[session.id] = {name: i for i, name in enumerate(names)}
+
         # per-session runtime state
         self._frames_saved: dict[str, int] = {}    # session_id → saved count
         self._last_saved:   dict[str, float] = {}  # session_id → monotonic timestamp
 
     async def start(self) -> None:
         self._loop = asyncio.get_event_loop()
-        if self._by_camera:
-            log.info(
-                "collector: active for cameras: %s",
-                ", ".join(sorted(self._by_camera)),
-            )
+        if not self._by_camera:
+            return
+
+        # write each session's data.yaml up front so the dataset descriptor
+        # exists before the first frame is saved
+        for sessions in self._by_camera.values():
+            for session in sessions:
+                session_dir = self._output_dir / session.id
+                _write_dataset_yaml(session_dir, self._class_names.get(session.id, []))
+
+        log.info(
+            "collector: active for cameras: %s",
+            ", ".join(sorted(self._by_camera)),
+        )
 
     async def on_frame(
             self,
@@ -90,13 +113,14 @@ class Collector:
         stem = _filename_stem(ts, session.camera)
 
         await self._loop.run_in_executor(
-            None, _save_files, session_dir, stem, frame, qualifying, session.save
+            None, _save_files, session_dir, stem, frame, qualifying,
+            self._class_ids.get(session.id, {}),
         )
 
         self._frames_saved[session.id] = saved + 1
         self._last_saved[session.id] = time.monotonic()
 
-        log.debug(
+        log.info(
             "collector [%s]: saved frame %d/%s  detections=%d",
             session.id,
             self._frames_saved[session.id],

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import cv2
@@ -13,44 +12,62 @@ def _save_files(
         stem: str,
         frame,
         results: list[InferenceResult],
-        save_cfg,
+        class_ids: dict[str, int],
 ) -> None:
-    session_dir.mkdir(parents=True, exist_ok=True)
+    """
+    Write one clean image + one YOLO-format label file, in the standard
+    training-dataset layout:
 
-    if save_cfg.raw:
-        cv2.imwrite(str(session_dir / f"{stem}_raw.jpg"), frame)
+        <session>/images/<stem>.jpg
+        <session>/labels/<stem>.txt
 
-    if save_cfg.annotated:
-        annotated = _draw_boxes(frame, results)
-        cv2.imwrite(str(session_dir / f"{stem}.jpg"), annotated)
+    Label lines: "<class_id> <cx> <cy> <w> <h>" — all normalized 0-1.
+    An empty label file is written when there are no detections (a valid
+    YOLO background/negative sample).
+    """
+    images_dir = session_dir / "images"
+    labels_dir = session_dir / "labels"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    labels_dir.mkdir(parents=True, exist_ok=True)
 
-    if save_cfg.metadata:
-        meta = {
-            "detections": [
-                {
-                    "class":      r.class_name,
-                    "confidence": round(r.confidence, 4),
-                    "bbox":       [round(v, 1) for v in r.bbox],
-                }
-                for r in results
-            ],
-        }
-        (session_dir / f"{stem}.json").write_text(
-            json.dumps(meta, indent=2), encoding="utf-8"
-        )
+    cv2.imwrite(str(images_dir / f"{stem}.jpg"), frame)
 
-
-def _draw_boxes(frame, results: list[InferenceResult]):
-    out = frame.copy()
+    h, w = frame.shape[:2]
+    lines: list[str] = []
     for r in results:
-        x1, y1, x2, y2 = (int(v) for v in r.bbox)
-        label = f"{r.class_name} {r.confidence:.2f}"
-        cv2.rectangle(out, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(
-            out, label, (x1, max(y1 - 6, 10)),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA,
-        )
-    return out
+        cid = class_ids.get(r.class_name)
+        if cid is None:
+            continue
+        x1, y1, x2, y2 = r.bbox
+        cx = ((x1 + x2) / 2) / w
+        cy = ((y1 + y2) / 2) / h
+        bw = (x2 - x1) / w
+        bh = (y2 - y1) / h
+        lines.append(f"{cid} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+
+    (labels_dir / f"{stem}.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _write_dataset_yaml(session_dir: Path, class_names: list[str]) -> None:
+    """
+    Write the YOLO dataset descriptor. The class ids here are the source of
+    truth for every label in this session — keep this file with the images/
+    and labels/ folders when moving or merging the dataset.
+    """
+    session_dir.mkdir(parents=True, exist_ok=True)
+    names_block = "\n".join(f"  {i}: {name}" for i, name in enumerate(class_names))
+    content = (
+        "# VisionEngine Edge — collected dataset\n"
+        "# Class ids below define the labels. Ordering comes from the camera's\n"
+        "# model class list in models.yaml. Keep this file with images/ + labels/.\n"
+        "path: .\n"
+        "train: images\n"
+        "val: images\n"
+        f"nc: {len(class_names)}\n"
+        "names:\n"
+        f"{names_block}\n"
+    )
+    (session_dir / "data.yaml").write_text(content, encoding="utf-8")
 
 
 def _filename_stem(ts: str, camera_id: str) -> str:
