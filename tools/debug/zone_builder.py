@@ -14,7 +14,7 @@ CONTROLS = [
 ]
 
 
-def run(source: str | int, existing_zones=None, title: str = "VisionEngine — Zone Builder") -> None:
+def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zone Builder") -> None:
     """
     mode: zones — click to draw zone polygons on the live frame.
 

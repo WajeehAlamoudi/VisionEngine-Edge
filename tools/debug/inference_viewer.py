@@ -14,7 +14,7 @@ CONTROLS = [
 ]
 
 
-def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine — Inference") -> None:
+def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference") -> None:
     """
     mode: inference — live model inference with detection overlay and zone visualization.
 

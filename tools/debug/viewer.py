@@ -12,7 +12,7 @@ CONTROLS = [
 ]
 
 
-def run(source: str | int, title: str = "VisionEngine — View") -> None:
+def run(source: str | int, title: str = "VisionEngine - View") -> None:
     """mode: view — raw stream with resolution and FPS display."""
     stream = CameraStream(source)
     if not stream.open():
