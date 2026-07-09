@@ -67,18 +67,27 @@ class CameraPipeline:
         self._stop.set()
 
     @staticmethod
-    def _open_cap(source: str) -> cv2.VideoCapture:
-        # Force TCP transport for RTSP — avoids UDP packet loss that causes H.264
-        # MB decode errors. One-time env set is fine because every RTSP camera on
-        # the device benefits from TCP reliability.
-        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+    def _open_cap(source: str) -> tuple[cv2.VideoCapture, int, int]:
+        # TCP + discard-corrupt handles H.264, H.265, H.264+ (Hikvision/Dahua non-standard SPS)
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            "rtsp_transport;tcp|fflags;+discardcorrupt+genpts"
+        )
         cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        # Drain startup frames so the decoder locks onto a clean keyframe before
-        # inference begins — same technique as debug/stream.py.
-        for _ in range(30):
-            cap.grab()
-        return cap
+        if not cap.isOpened():
+            return cap, 0, 0
+        # Decode until we get a valid frame — grab() alone won't recover a
+        # non-standard H.264+ stream with bad SPS headers.
+        w, h = 0, 0
+        for _ in range(120):
+            ret, frame = cap.read()
+            if ret and frame is not None and frame.size > 0:
+                h, w = frame.shape[:2]
+                break
+        if w == 0:
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        return cap, w, h
 
     async def run(self) -> None:
         loop = asyncio.get_event_loop()
@@ -89,14 +98,13 @@ class CameraPipeline:
             self._cam.id, self._cam.source, self._cam.fps_target, self._cam.model_id,
         )
 
-        cap = await loop.run_in_executor(None, self._open_cap, self._cam.source)
+        cap, frame_w, frame_h = await loop.run_in_executor(None, self._open_cap, self._cam.source)
         if not cap.isOpened():
             self.last_error = f"failed to open source: {self._cam.source}"
             log.error("camera '%s': %s", self._cam.id, self.last_error)
             return
 
-        frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        log.info("camera '%s': stream ready  %dx%d", self._cam.id, frame_w, frame_h)
         last_inference = 0.0
 
         try:

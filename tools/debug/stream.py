@@ -15,18 +15,29 @@ class CameraStream:
 
     def open(self) -> bool:
         src = int(self._source) if str(self._source).isdigit() else self._source
-        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+        # Force TCP + tolerate non-standard SPS/PPS (H.264+, Hikvision, Dahua, etc.)
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+            "rtsp_transport;tcp|fflags;+discardcorrupt+genpts"
+        )
         self._cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self._cap.isOpened():
             print(f"ERROR  cannot open source: {self._source}")
             return False
-        self.width  = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        # drain frames until the decoder locks onto a keyframe
+
+        # Decode frames until we get a valid one — grab() alone won't sync a
+        # non-standard H.264+ stream that has bad SPS headers on early packets.
         print("Syncing decoder...", end="", flush=True)
-        for _ in range(60):
-            self._cap.grab()
+        for _ in range(120):
+            ret, frame = self._cap.read()
+            if ret and frame is not None and frame.size > 0:
+                self.width  = frame.shape[1]
+                self.height = frame.shape[0]
+                break
+        else:
+            # Fallback: stream opened but never yielded a decodable frame
+            print(" WARNING: no valid frame decoded")
+            return False
         print(" done")
         return True
 
