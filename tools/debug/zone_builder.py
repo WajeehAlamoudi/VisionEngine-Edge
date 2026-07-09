@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 import cv2
@@ -8,20 +9,22 @@ import yaml
 from .overlay import draw_completed_zones, draw_hud, draw_polygon_in_progress, draw_controls
 from .stream import CameraStream
 
+log = logging.getLogger(__name__)
+
 CONTROLS = [
-    "Q — quit  |  S — save & print YAML  |  Z — toggle existing zones",
-    "N — finish zone & name it  |  U — undo last point  |  Left click — add point",
+    "Q - quit  |  S - save & print YAML  |  Z - toggle existing zones",
+    "N - finish zone & name it  |  U - undo last point  |  Left click - add point",
 ]
 
 
 def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zone Builder") -> None:
     """
-    mode: zones — click to draw zone polygons on the live frame.
+    mode: zones - click to draw zone polygons on the live frame.
 
     Controls:
       Left click  add a point to the current polygon
       U           undo last point
-      N           finish current polygon — prompts for zone name in terminal
+      N           finish current polygon - prompts for zone name in terminal
       Z           toggle overlay of existing zones from cameras.yaml
       S           print final YAML block to terminal
       Q           quit
@@ -30,12 +33,12 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
     if not stream.open():
         return
 
-    print(f"\nStream opened  {stream.width}x{stream.height}")
-    print("Left-click to add points. Press N to finish a zone. Press S to save. Press Q to quit.\n")
+    log.info("stream ready  %dx%d", stream.width, stream.height)
+    log.info("left-click to add points | N finish zone | S save YAML | Q quit")
 
     # ── state ─────────────────────────────────────────────────────────────────
     current_points: list[list[int]] = []   # points being drawn right now
-    completed_zones: list[dict] = []       # {name, points} — finished zones
+    completed_zones: list[dict] = []       # {name, points} - finished zones
     mouse_pos: list[int] = [0, 0]
     show_existing = bool(existing_zones)
 
@@ -48,7 +51,7 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
         mouse_pos[0], mouse_pos[1] = x, y
         if event == cv2.EVENT_LBUTTONDOWN:
             current_points.append([x, y])
-            print(f"  point {len(current_points)}: [{x}, {y}]")
+            log.info("point %d: [%d, %d]", len(current_points), x, y)
 
     cv2.namedWindow(title)
     cv2.setMouseCallback(title, on_mouse)
@@ -57,12 +60,12 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
     # even if the RTSP stream drops mid-session (common with H.264+ NVRs).
     static_frame = stream.read()
     if static_frame is None:
-        print("ERROR  could not grab a frame to draw on")
+        log.error("could not grab a frame to draw on")
         stream.release()
         cv2.destroyAllWindows()
         return
     stream.release()
-    print("Frame captured — stream closed. Draw your zones, press S to save.\n")
+    log.info("frame captured - stream closed. draw zones, press S to save.")
 
     while True:
         frame = static_frame.copy()
@@ -88,23 +91,22 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
         elif key == ord("u"):
             if current_points:
                 removed = current_points.pop()
-                print(f"  undo — removed point [{removed[0]}, {removed[1]}]")
+                log.info("undo - removed point [%d, %d]", removed[0], removed[1])
 
         elif key == ord("n"):
             if len(current_points) < 3:
-                print("  need at least 3 points to complete a zone")
+                log.warning("need at least 3 points to complete a zone")
             else:
                 name = input(f"  zone name (zone_{len(completed_zones) + 1}): ").strip()
                 if not name:
                     name = f"zone_{len(completed_zones) + 1}"
                 completed_zones.append({"name": name, "points": list(current_points)})
-                print(f"  zone '{name}' saved with {len(current_points)} points")
+                log.info("zone '%s' saved with %d points", name, len(current_points))
                 current_points = []
 
         elif key == ord("z"):
             show_existing = not show_existing
-            state = "ON" if show_existing else "OFF"
-            print(f"  existing zones overlay: {state}")
+            log.info("existing zones overlay: %s", "ON" if show_existing else "OFF")
 
         elif key == ord("s"):
             _print_yaml(completed_zones, stream.width, stream.height)
@@ -113,18 +115,17 @@ def run(source: str | int, existing_zones=None, title: str = "VisionEngine - Zon
     cv2.destroyAllWindows()
 
     if completed_zones:
-        print("\n── final output ──────────────────────────────────────────────")
         _print_yaml(completed_zones, stream.width, stream.height)
 
 
 def _print_yaml(zones: list[dict], width: int, height: int) -> None:
     if not zones:
-        print("  no zones to save yet")
+        log.warning("no zones to save yet")
         return
 
+    # Raw print intentional — output must be clean YAML the user can copy directly
     print(f"\n# Camera resolution: {width} x {height}")
     print("# Paste this under your camera entry in cameras.yaml:\n")
-
     output = {"zones": [{"name": z["name"], "polygon": z["points"]} for z in zones]}
     print(yaml.dump(output, default_flow_style=None, sort_keys=False).rstrip())
     print()

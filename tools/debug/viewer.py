@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 import cv2
@@ -7,19 +8,20 @@ import cv2
 from .overlay import draw_hud, draw_controls
 from .stream import CameraStream
 
+log = logging.getLogger(__name__)
+
 CONTROLS = [
-    "Q — quit",
+    "Q - quit",
 ]
 
 
 def run(source: str | int, title: str = "VisionEngine - View") -> None:
-    """mode: view — raw stream with resolution and FPS display."""
+    """mode: view - raw stream with resolution and FPS display."""
     stream = CameraStream(source)
     if not stream.open():
         return
 
-    print(f"Stream opened  {stream.width}x{stream.height}")
-    print("Press Q to quit.")
+    log.info("stream ready  %dx%d  |  press Q to quit", stream.width, stream.height)
 
     fps = 0.0
     t_last = time.monotonic()
@@ -32,7 +34,7 @@ def run(source: str | int, title: str = "VisionEngine - View") -> None:
             last_frame = f
             frame_count += 1
         elif last_frame is None:
-            print("Stream ended.")
+            log.warning("stream ended")
             break
 
         frame = last_frame.copy()

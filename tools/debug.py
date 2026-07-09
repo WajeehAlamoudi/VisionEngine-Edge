@@ -21,11 +21,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 # ── make sure project root is on sys.path ─────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)-8s %(name)s  %(message)s",
+)
 
 from tools.debug.viewer           import run as run_view
 from tools.debug.zone_builder     import run as run_zones
@@ -57,6 +63,9 @@ def _resolve_source(args) -> str | int | None:
     return None
 
 
+log = logging.getLogger(__name__)
+
+
 def main() -> None:
     args = _parse_args()
 
@@ -66,7 +75,7 @@ def main() -> None:
         if source is None:
             source = _source_from_config(args)
         if source is None:
-            print("ERROR  provide --source or --camera + --config")
+            log.error("provide --source or --camera + --config")
             sys.exit(1)
         run_view(source)
 
@@ -85,7 +94,7 @@ def main() -> None:
                     existing_zones = cam.zones if cam.zones else None
 
         if source is None:
-            print("ERROR  provide --source or --camera + --config")
+            log.error("provide --source or --camera + --config")
             sys.exit(1)
 
         run_zones(source, existing_zones=existing_zones)
@@ -93,7 +102,7 @@ def main() -> None:
     # ── inference mode ────────────────────────────────────────────────────────
     elif args.mode == "inference":
         if not args.camera:
-            print("ERROR  --camera is required for inference mode")
+            log.error("--camera is required for inference mode")
             sys.exit(1)
         cfg = _load_config(args.config)
         if cfg is None:
@@ -106,10 +115,10 @@ def _load_config(config_dir: str):
         from core.config import load_config
         return load_config(config_dir)
     except SystemExit as e:
-        print(f"Config error: {e}")
+        log.error("config error: %s", e)
         return None
     except Exception as e:
-        print(f"Failed to load config from '{config_dir}': {e}")
+        log.error("failed to load config from '%s': %s", config_dir, e)
         return None
 
 
@@ -121,7 +130,7 @@ def _source_from_config(args) -> str | int | None:
         return None
     cam = cfg.get_camera(args.camera)
     if cam is None:
-        print(f"ERROR  camera '{args.camera}' not found in config")
+        log.error("camera '%s' not found in config", args.camera)
         return None
     return cam.source
 

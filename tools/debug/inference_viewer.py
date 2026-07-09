@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 
 import cv2
@@ -9,14 +10,16 @@ from core.model import ModelRunner
 from .overlay import draw_detections, draw_hud, draw_zones, draw_controls
 from .stream import CameraStream
 
+log = logging.getLogger(__name__)
+
 CONTROLS = [
-    "Q — quit  |  Z — toggle zones  |  D — toggle detections",
+    "Q - quit  |  Z - toggle zones  |  D - toggle detections",
 ]
 
 
 def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference") -> None:
     """
-    mode: inference — live model inference with detection overlay and zone visualization.
+    mode: inference - live model inference with detection overlay and zone visualization.
 
     Shows:
       - Live bounding boxes with class name, confidence, track_id
@@ -26,27 +29,27 @@ def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference")
     """
     cam: CameraConfig | None = cfg.get_camera(camera_id)
     if cam is None:
-        print(f"ERROR  camera '{camera_id}' not found in config")
+        log.error("camera '%s' not found in config", camera_id)
         return
 
     model_cfg = cfg.get_model(cam.model_id)
     if model_cfg is None:
-        print(f"ERROR  model '{cam.model_id}' not found in models.yaml")
+        log.error("model '%s' not found in models.yaml", cam.model_id)
         return
 
-    print(f"Loading model '{cam.model_id}' from {model_cfg.path} ...")
+    log.info("loading model '%s' from %s ...", cam.model_id, model_cfg.path)
     runner = ModelRunner(cfg=model_cfg)
     runner.load()
-    print(f"Model ready. Opening camera '{camera_id}' source: {cam.source}")
+    log.info("model ready — opening camera '%s'", camera_id)
 
     stream = CameraStream(cam.source)
     if not stream.open():
         return
 
-    print(f"Stream opened  {stream.width}x{stream.height}")
-    print(f"Classes: {cam.classes}")
-    print(f"Zones:   {[z.name for z in cam.zones] or 'none (full frame)'}")
-    print("Press Q to quit. Press Z to toggle zones. Press D to toggle detections.\n")
+    log.info("stream ready  %dx%d", stream.width, stream.height)
+    log.info("classes: %s", cam.classes)
+    log.info("zones:   %s", [z.name for z in cam.zones] or "none (full frame)")
+    log.info("Q quit  |  Z toggle zones  |  D toggle detections")
 
     show_zones      = bool(cam.zones)
     show_detections = True
@@ -62,7 +65,7 @@ def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference")
         if not stale:
             last_frame = f
         elif last_frame is None:
-            print("Stream ended.")
+            log.warning("stream ended")
             break
 
         frame = last_frame.copy()
@@ -72,7 +75,7 @@ def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference")
             try:
                 last_results = runner.run(frame, cam.classes)
             except Exception as exc:
-                print(f"Inference error: {exc}")
+                log.error("inference error: %s", exc)
                 last_results = []
             inf_time = time.monotonic() - t0
             inf_times.append(inf_time)
