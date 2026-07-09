@@ -53,10 +53,12 @@ def draw_hud(frame, fps: float, width: int, height: int, extras: list[str] | Non
 
     scale = _hud_scale(width)
     line_h = int(30 * scale)
-    pad    = int(10 * scale)
+    pad    = int(12 * scale)
 
-    text_w = max(cv2.getTextSize(ln, FONT, scale, 1)[0][0] for ln in lines)
-    panel_w = text_w + pad * 2
+    # Measure with the outline thickness (3) the text is actually rendered with,
+    # then add generous right padding so nothing spills off the panel.
+    text_w  = max(cv2.getTextSize(ln, FONT, scale, 3)[0][0] for ln in lines)
+    panel_w = text_w + pad * 3
     panel_h = line_h * len(lines) + pad
     _panel(frame, 0, 0, panel_w, panel_h)
 
@@ -140,8 +142,8 @@ def draw_controls(frame, lines: list[str]) -> None:
     line_h = int(28 * scale)
     pad    = int(10 * scale)
 
-    text_w  = max(cv2.getTextSize(ln, FONT, scale, 1)[0][0] for ln in lines)
-    panel_w = text_w + pad * 2
+    text_w  = max(cv2.getTextSize(ln, FONT, scale, 3)[0][0] for ln in lines)
+    panel_w = text_w + pad * 3
     panel_h = line_h * len(lines) + pad
     _panel(frame, 0, fh - panel_h, panel_w, panel_h)
 
