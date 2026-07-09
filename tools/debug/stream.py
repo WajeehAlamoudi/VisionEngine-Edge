@@ -20,7 +20,10 @@ class CameraStream:
         src = int(self._source) if str(self._source).isdigit() else self._source
         # Force TCP + tolerate non-standard SPS/PPS (H.264+, Hikvision, Dahua, etc.)
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-            "rtsp_transport;tcp|fflags;+discardcorrupt+genpts"
+            "rtsp_transport;tcp"
+            "|fflags;+discardcorrupt+genpts"
+            "|probesize;50000000"
+            "|analyzeduration;50000000"
         )
         self._cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)

@@ -70,7 +70,10 @@ class CameraPipeline:
     def _open_cap(source: str) -> tuple[cv2.VideoCapture, int, int]:
         # TCP + discard-corrupt handles H.264, H.265, H.264+ (Hikvision/Dahua non-standard SPS)
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-            "rtsp_transport;tcp|fflags;+discardcorrupt+genpts"
+            "rtsp_transport;tcp"
+            "|fflags;+discardcorrupt+genpts"
+            "|probesize;50000000"
+            "|analyzeduration;50000000"
         )
         cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
