@@ -1,0 +1,53 @@
+# ── BoT-SORT tracker configuration ──────────────────────────────────────────
+#
+# Referenced from models.yaml via the "tracker:" field, e.g.:
+#   tracker: "config/botsort_tracker.yaml"
+#
+# Naming convention for tracker config files: "<algorithm>_tracker.yaml"
+# (e.g. a future ByteTrack config would be "bytetrack_tracker.yaml").
+# Add a new one the same way if a new tracker backend is registered in
+# core/model/tracker/registry.py.
+#
+# These are real, literal values passed straight into boxmot's BotSort
+# class. This is NOT the same file as boxmot's own bundled botsort.yaml —
+# that one is a hyperparameter search-space definition for its internal
+# auto-tuning engine (ranges, not values) and cannot be loaded directly.
+# If this file is missing or unreadable, BoxMotTracker falls back to safe
+# defaults (with_reid: false, use_cmc: false) and logs a warning — nothing
+# crashes.
+
+# Match objects by appearance (what they look like), not just position.
+# Turn this on to recover identity across occlusion or low camera frame
+# rate — the two biggest causes of a track_id changing when it shouldn't.
+with_reid: true
+
+# Camera-motion compensation — corrects for the *camera itself* moving or
+# shaking between frames. Leave false for a fixed/static camera; only
+# turn on for a handheld or pan-tilt-zoom camera.
+use_cmc: false
+
+# Set this to match the camera's real, measured frames-per-second — not
+# the configured fps_target. The tracker uses this to judge how far an
+# object should plausibly move between frames. A stale/wrong value here
+# makes the tracker's motion predictions worse, not better.
+frame_rate: 5
+
+# How many frames a track is kept "alive" (rememberable) after it stops
+# being detected, before it's given up on and its ID is freed. Raise this
+# if objects are frequently lost behind obstacles for a few seconds.
+track_buffer: 30
+
+# Minimum box overlap (IoU) required to accept a match between a new
+# detection and a track's predicted position. Lower = more lenient
+# matching (fewer new IDs created, but higher risk of mismatches).
+match_thresh: 0.8
+
+# Minimum detection confidence required to start a brand-new track.
+new_track_thresh: 0.6
+
+# Confidence threshold for the primary (high-confidence) matching pass.
+track_high_thresh: 0.6
+
+# Confidence threshold for the secondary (low-confidence) matching pass —
+# catches partially-occluded or blurry detections the first pass missed.
+track_low_thresh: 0.1
