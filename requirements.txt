@@ -1,7 +1,8 @@
 # ── inference ─────────────────────────────────────────────────────────────────
-ultralytics>=8.2.0          # YOLO model loading and inference
+ultralytics>=8.2.0          # YOLO model loading and inference (detection only)
 opencv-python>=4.8.0        # camera capture, frame read/write, annotation drawing
 numpy>=1.24.0               # raw frame buffer handling in debug stream subprocess pipe
+boxmot>=19.0.0               # BoT-SORT tracking — consumes detections only, no detection model of its own
 
 # ── async runtime ─────────────────────────────────────────────────────────────
 aiosqlite>=0.19.0           # async SQLite for local buffer (WAL mode)
