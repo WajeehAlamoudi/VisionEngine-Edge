@@ -31,6 +31,10 @@ config/rules.yaml
 config/notifications.yaml
 config/collection.yaml
 
+# Tracker tuning — device-specific (frame_rate should match each device's
+# real measured fps). Copy from the committed template and tune per device.
+config/botsort_tracker.yaml
+
 # Models (large binary files — store separately)
 *.pt
 *.onnx
