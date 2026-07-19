@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,16 @@ class BoxMotTracker(Tracker):
     reid_model to BotSort) to assign track_id. The detection model itself
     is free to be retrained/improved independently; this class never
     touches model weights.
+
+    track_id exposed to the rest of the system is a UUID, not boxmot's raw
+    integer. boxmot's own counter resets to 1 on every process restart —
+    left as-is internally since it's core to the tracking algorithm — but
+    reusing that integer directly as our persisted track_id would let a
+    track from today collide with an unrelated track after a restart next
+    week. Mapping each raw integer to a freshly-generated UUID the first
+    time it's seen removes that collision risk entirely: a new tracker
+    instance (created on every restart) starts with an empty map, so IDs
+    from a previous run can never resurface.
     """
 
     def __init__(self, cfg: ModelConfig) -> None:
@@ -41,6 +52,8 @@ class BoxMotTracker(Tracker):
         # this tracker instance regardless of the detector's internal indices
         self._name_to_idx: dict[str, int] = {}
         self._idx_to_name: dict[int, str] = {}
+        # boxmot's raw integer track id → our stable UUID, for this tracker's lifetime
+        self._id_map: dict[int, str] = {}
 
     def load(self) -> None:
         self._name_to_idx = {name: i for i, name in enumerate(self._cfg.classes)}
@@ -84,6 +97,11 @@ class BoxMotTracker(Tracker):
                 class_name=self._idx_to_name.get(int(cls_idx), "unknown"),
                 confidence=float(conf),
                 bbox=xyxy.tolist(),
-                track_id=int(track_id),
+                track_id=self._stable_id(int(track_id)),
             ))
         return out
+
+    def _stable_id(self, raw_id: int) -> str:
+        if raw_id not in self._id_map:
+            self._id_map[raw_id] = str(uuid.uuid4())
+        return self._id_map[raw_id]

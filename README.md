@@ -219,7 +219,7 @@ Cameras sharing a model with `use_tracker: false` share one model instance (RAM 
 CREATE TABLE <schema>.detections (
     id            BIGSERIAL PRIMARY KEY,
     camera_id     TEXT,          camera_name  TEXT,
-    model_id      TEXT,          track_id     INTEGER,
+    model_id      TEXT,          track_id     TEXT,
     class         TEXT,          confidence   NUMERIC,
     bbox_x1       INTEGER,       bbox_y1      INTEGER,
     bbox_x2       INTEGER,       bbox_y2      INTEGER,
@@ -236,7 +236,7 @@ CREATE TABLE <schema>.notifications (
     rule_name     TEXT,          severity     TEXT,
     message       TEXT,
     camera_id     TEXT,          camera_name  TEXT,
-    model_id      TEXT,          track_id     INTEGER,
+    model_id      TEXT,          track_id     TEXT,
     class         TEXT,          confidence   NUMERIC,
     bbox_x1       INTEGER,       bbox_y1      INTEGER,
     bbox_x2       INTEGER,       bbox_y2      INTEGER,

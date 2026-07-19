@@ -109,7 +109,8 @@ def draw_detections(frame, detections) -> None:
 
         label = f"{det.class_name} {det.confidence:.2f}"
         if det.track_id is not None:
-            label = f"[{det.track_id}] {label}"
+            # full UUID is stored/sent as-is — only the on-screen label is shortened
+            label = f"[{det.track_id[:8]}] {label}"
 
         lw, lh = cv2.getTextSize(label, FONT, 0.5, 1)[0]
         cv2.rectangle(frame, (x1, y1 - lh - 6), (x1 + lw + 4, y1), CLR_DET_BOX, -1)

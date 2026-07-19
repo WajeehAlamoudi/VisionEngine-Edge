@@ -8,4 +8,4 @@ class InferenceResult:
     class_name: str
     confidence: float
     bbox:       list[float]    # [x1, y1, x2, y2] absolute pixel coords
-    track_id:   int | None     # assigned by ByteTrack; None when tracker not active
+    track_id:   str | None     # stable UUID assigned by the tracker; None when tracker not active

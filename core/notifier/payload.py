@@ -24,7 +24,7 @@ def _build_payload(match, device_id: str, branch_id: str) -> dict:
         "message":     match.message,   # formatted rule message with placeholders resolved
 
         # ── detection identity ────────────────────────────────────────────────
-        "track_id":    det.track_id,    # always None on edge (no tracker)
+        "track_id":    det.track_id,    # stable UUID string; None when tracker not active for this camera
         "class":       det.class_name,
         "confidence":  round(det.confidence, 4),
         "model_id":    det.model_id,

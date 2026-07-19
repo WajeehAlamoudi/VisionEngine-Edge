@@ -16,7 +16,7 @@ class DetectionEvent:
     All downstream modules work from this object alone — no extra context needed.
     """
     # ── model output ──────────────────────────────────────────────────────────
-    track_id:   int | None     # always None on edge (no tracker)
+    track_id:   str | None     # stable UUID from the tracker; None when tracker not active for this camera
     class_name: str
     confidence: float
     bbox:       list[float]    # [x1, y1, x2, y2] absolute pixel coords
