@@ -5,10 +5,13 @@ import uuid
 from pathlib import Path
 
 import numpy as np
+import torch
 import yaml
+from boxmot.reid.backends.pytorch_backend import PyTorchBackend
 from boxmot.trackers.bbox.botsort import BotSort
 
 from core.config import ModelConfig
+from ..device import _resolve_device
 from ..types import InferenceResult
 from .base import Tracker
 
@@ -20,6 +23,10 @@ _DEFAULT_PARAMS = {
     "with_reid": False,
     "use_cmc": False,
 }
+
+# Small, widely-used person-ReID checkpoint — auto-downloaded by boxmot on
+# first use, same pattern as Ultralytics auto-downloading YOLO weights.
+_DEFAULT_REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 
 
 class BoxMotTracker(Tracker):
@@ -60,6 +67,18 @@ class BoxMotTracker(Tracker):
         self._idx_to_name = {i: name for name, i in self._name_to_idx.items()}
 
         params = self._load_params()
+        reid_weights = params.pop("reid_weights", _DEFAULT_REID_WEIGHTS)
+
+        if params.get("with_reid"):
+            # Same device value already used to place the detector — reused
+            # here rather than adding a separate config field. On the Pi this
+            # resolves to cpu (ReID still works, just not accelerated); on a
+            # Jetson/GPU box it resolves to cuda, and the ReID network actually
+            # gets the GPU speedup instead of silently running on CPU.
+            device = torch.device(_resolve_device(self._cfg.device))
+            params["reid_model"] = PyTorchBackend(reid_weights, device, half=False)
+            log.info("tracker '%s': ReID model loaded on %s", self._cfg.id, device)
+
         self._tracker = BotSort(**params)
         log.info(
             "tracker '%s' ready — boxmot BotSort (with_reid=%s, use_cmc=%s)",
