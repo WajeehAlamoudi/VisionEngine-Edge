@@ -19,11 +19,21 @@ class UltralyticsDetector(Detector):
         super().__init__(cfg)
         self._model = None
         self._device = ""
+        self._half = False
         self._name_to_idx: dict[str, int] = {}
 
     def load(self) -> None:
         self._device = _resolve_device(self._cfg.device)
-        log.info("detector '%s': loading %s on %s", self._cfg.id, self._cfg.path, self._device)
+        # half only helps on a GPU — on cpu/mps it typically gives no speedup
+        # (sometimes slower), so a stray half: true in config is silently a
+        # no-op there instead of doing something counterproductive.
+        self._half = self._cfg.half and self._device == "cuda"
+        if self._cfg.half and not self._half:
+            log.info(
+                "detector '%s': half=true ignored — no benefit on device=%s",
+                self._cfg.id, self._device,
+            )
+        log.info("detector '%s': loading %s on %s (half=%s)", self._cfg.id, self._cfg.path, self._device, self._half)
         self._model = YOLO(self._cfg.path)
         self._name_to_idx = {name: idx for idx, name in self._model.names.items()}
         log.info(
@@ -41,6 +51,7 @@ class UltralyticsDetector(Detector):
             imgsz=(h, w),
             classes=indices or None,
             device=self._device,
+            half=self._half,
             verbose=False,
         )
         return self._parse(results)

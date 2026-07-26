@@ -15,6 +15,8 @@ class ModelConfig:
     input_size: list[int]   # [width, height]
     use_tracker: bool        # true = BoT-SORT tracker ON → track_id populated per object
     tracker: str             # tracker algorithm file — "botsort.yaml" | "bytetrack.yaml"
+    half: bool               # FP16 inference — only applied when device resolves to cuda;
+                              # ignored on cpu/mps, where it gives no benefit (see device.py)
 
 
 def parse(raw: dict) -> ModelConfig:
@@ -30,4 +32,5 @@ def parse(raw: dict) -> ModelConfig:
         input_size=raw.get("input_size", [640, 640]),
         use_tracker=bool(raw.get("use_tracker", False)),
         tracker=raw.get("tracker", "botsort.yaml"),
+        half=bool(raw.get("half", False)),
     )
