@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import cv2
 import numpy as np
+import yaml
 
 from core.config import ModelConfig
 from ..types import InferenceResult
@@ -38,7 +40,8 @@ class HailoDetector(Detector):
         self._input_vstream_params = None
         self._output_vstream_params = None
         self._input_shape: tuple[int, int, int] = (0, 0, 0)
-        self._class_names: list[str] = []
+        # index → real class name, read from metadata.yaml (see _load_metadata_names)
+        self._idx_to_name: dict[int, str] = {}
 
     def load(self) -> None:
         # Imported lazily — hailo_platform only installs on Linux with the
@@ -71,17 +74,36 @@ class HailoDetector(Detector):
             self._network_group, format_type=FormatType.FLOAT32,
         )
 
-        # A .hef carries no class names the way a .pt does — class order
-        # must match the order the model was trained/exported with, which is
-        # exactly the order given in this model's `classes:` list in
-        # models.yaml. Getting that order wrong silently mislabels every
-        # detection, so this is a hard requirement, not a convenience.
-        self._class_names = list(self._cfg.classes)
+        # A .hef itself carries no class names — but Ultralytics' Hailo
+        # export writes a metadata.yaml next to it with the real, complete,
+        # correctly-ordered class list the model was trained on. Reading
+        # that (instead of trusting classes: in models.yaml as a positional
+        # map) means classes: here behaves exactly like it does for every
+        # other backend: a name-based filter, safe to narrow to any subset,
+        # not a hard requirement to list every class in order.
+        self._idx_to_name = self._load_metadata_names()
 
         log.info(
-            "detector '%s' ready — %d classes, input %s, device=hailo",
-            self._cfg.id, len(self._class_names), self._input_shape,
+            "detector '%s' ready — %d classes (from metadata.yaml), input %s, device=hailo",
+            self._cfg.id, len(self._idx_to_name), self._input_shape,
         )
+
+    def _load_metadata_names(self) -> dict[int, str]:
+        metadata_path = Path(self._cfg.path).with_name("metadata.yaml")
+        if not metadata_path.exists():
+            raise FileNotFoundError(
+                f"detector '{self._cfg.id}': expected metadata.yaml next to "
+                f"{self._cfg.path} (Ultralytics' Hailo export always writes one "
+                f"alongside the .hef) — without it there's no way to know which "
+                f"class each detection index corresponds to. Copy metadata.yaml "
+                f"from the export output into the same folder as the .hef."
+            )
+        with metadata_path.open("r", encoding="utf-8") as f:
+            metadata = yaml.safe_load(f)
+        names = metadata.get("names")
+        if not names:
+            raise ValueError(f"detector '{self._cfg.id}': metadata.yaml has no 'names' entry")
+        return {int(idx): name for idx, name in names.items()}
 
     def infer(self, frame, active_classes: list[str]) -> list[InferenceResult]:
         from hailo_platform import InferVStreams
@@ -125,9 +147,9 @@ class HailoDetector(Detector):
         detections = raw[output_name][0]  # drop the batch dim
 
         for cls_idx, class_dets in enumerate(detections):
-            if cls_idx >= len(self._class_names):
+            class_name = self._idx_to_name.get(cls_idx)
+            if class_name is None:
                 continue
-            class_name = self._class_names[cls_idx]
             if active is not None and class_name not in active:
                 continue
             for det in class_dets:
