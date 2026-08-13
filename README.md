@@ -92,20 +92,54 @@ Every detected object is enriched with spatial context, matched against configur
 - **Heartbeat** — device health rows pushed to `nodes` table on a configurable interval
 - **Dataset collection** — frame sampler with schedule, filters, and save modes
 - **Debug tool** — three live modes: view stream, draw zones, run inference overlay
-- **Hardware agnostic** — CPU, CUDA, Apple MPS, Hailo-8L all work with a single config change
+- **Hardware agnostic** — CPU, CUDA, and Apple MPS all work with a single `device:` change in `models.yaml`; Hailo runs through its own dedicated backend (see [Hailo Backend](#hailo-backend) below — more involved than a config change)
 
 ---
 
 ## Hardware
 
-| Device | Inference | Recommended FPS |
-|--------|-----------|-----------------|
-| Raspberry Pi 4 (CPU) | PyTorch `.pt` | 1–2 |
-| Raspberry Pi 5 (CPU) | PyTorch `.pt` | 2–3 |
-| Raspberry Pi + Hailo-8L | Hailo `.hef` | 5–10 |
-| Jetson Nano | CUDA `.pt` | 5–8 |
-| Jetson Orin | CUDA `.pt` | 15–30 |
-| Mac Mini (M-series) | MPS / CoreML | 10–20 |
+| Device | Inference | Recommended FPS | Status |
+|--------|-----------|-----------------|--------|
+| Raspberry Pi 4 (CPU) | PyTorch `.pt` | 1–2 | Verified |
+| Raspberry Pi 5 (CPU) | PyTorch `.pt` | 2–3 | Verified |
+| Raspberry Pi + Hailo-8/8L | Hailo `.hef` | TBD | Blocked — see [Hailo Backend](#hailo-backend) |
+| Jetson Nano | CUDA `.pt` | 5–8 | Estimated |
+| Jetson Orin | CUDA `.pt` | 15–30 | Estimated |
+| Mac Mini (M-series) | MPS / CoreML | 10–20 | Estimated |
+
+FPS figures not marked "Verified" are estimates, not measurements — treat them as a starting expectation, not a spec.
+
+---
+
+## Hailo Backend
+
+CPU, CUDA, and MPS all run through the same Ultralytics/torch code path — swapping between them is genuinely a one-line `device:` change in `models.yaml`. Hailo does not work this way, and that's not a temporary gap — it's a structural difference worth understanding before planning around it.
+
+### Why Hailo is different
+
+- A `.hef` file has no PyTorch/Ultralytics runtime behind it at all. Inference on a Hailo chip runs entirely through **HailoRT** (Hailo's own SDK), via a separate `HailoDetector` backend (`core/model/detector/hailo_detector.py`) — not through `ultralytics.YOLO.predict()`.
+- Getting a model onto Hailo is a two-step, two-machine process:
+  1. **Convert** `.pt → .hef` using Ultralytics' export (`yolo export model=X.pt format=hailo name=hailo8`) plus Hailo's Dataflow Compiler. This step only runs on **x86_64 Linux with Python 3.10** — not on the edge device itself (Hailo compilation isn't supported on ARM), and not on any other Python version (the Dataflow Compiler is only built for 3.10).
+  2. **Deploy** the resulting `.hef` *and* its accompanying `metadata.yaml` (written alongside it by the export) together to the edge device — `HailoDetector` reads the model's real class list from `metadata.yaml` at load time, since a `.hef` carries no class names of its own. Copying the `.hef` alone is not sufficient.
+- Only **YOLOv8, YOLO11, and YOLO26** architectures can export to Hailo format today. Other YOLO versions (e.g. YOLOv12) are rejected by Ultralytics' own exporter before it even reaches the Hailo compiler — this is not a configuration problem and can't be worked around from this codebase.
+
+### Known limitation — dependency conflict on-device
+
+HailoRT versions **before 5.3.0** require `numpy==1.23.3` to run inference correctly; without it, `hailo_platform` returns a zero-byte input buffer to the chip regardless of what data is actually sent, and every inference call fails with:
+```
+[HailoRT] [error] CHECK failed - Memory size of vstream ... does not match the frame count! (Expected N, got 0)
+```
+This is not fixable from application code — it's a numpy ABI compatibility issue inside HailoRT's compiled bindings.
+
+The conflict: the tracker library this project uses (`boxmot`) requires `numpy>=2.2.0` — the exact opposite constraint. The two cannot be pinned to a mutually compatible numpy version in one shared Python environment.
+
+As of this writing, **Raspberry Pi OS's own apt repository only packages HailoRT up to 4.20.0** — the numpy-2.x-compatible 5.3.0+ release isn't available through it. Installing a newer HailoRT manually is possible but uses a driver/firmware stack Raspberry Pi hasn't packaged or tested for their AI Kit integration, and carries real risk to a working setup.
+
+**Net effect:** on a device where both Hailo detection and BoT-SORT tracking (`use_tracker: true`) need to run together in the current single-process architecture, this dependency conflict currently blocks it from running end-to-end.
+
+### Next planned change
+
+Isolate `HailoDetector`'s inference call into its own dedicated environment (a separate Python 3.11 venv pinned to `numpy==1.23.3`, containing only `hailo_platform`) and have it communicate with the main process — instead of importing `hailo_platform` directly into the same process as `boxmot`/`torch`. This keeps HailoRT's dependency constraints from ever touching the rest of the stack, without waiting on an upstream HailoRT release or an apt package update. Not yet implemented.
 
 ---
 
