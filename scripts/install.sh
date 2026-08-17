@@ -104,6 +104,21 @@ prompt_yes_no() {
     done
 }
 
+# $1 = prompt text, $2 = default (optional — if omitted, empty answers are rejected)
+prompt_text() {
+    local prompt="$1" default="${2:-}" answer
+    while true; do
+        if [ -n "$default" ]; then
+            read -r -p "$prompt [$default]: " answer
+            answer="${answer:-$default}"
+        else
+            read -r -p "$prompt: " answer
+        fi
+        [ -n "$answer" ] && { echo "$answer"; return 0; }
+        echo "  This can't be empty — try again." >&2
+    done
+}
+
 print_banner
 
 # ── python version check ──────────────────────────────────────────────────────
@@ -139,6 +154,14 @@ device_choice="$(prompt_choice "  Choice" "1" "1 2 3 4 5")"
 USE_SYSTEM_SITE_PACKAGES=0
 TORCH_INSTALL_CMD=""
 POST_INSTALL_NOTE=""
+
+# what models.yaml's own device: field should be for this hardware
+case "$device_choice" in
+    2|3) MODEL_DEVICE="cuda"  ;;
+    4)   MODEL_DEVICE="mps"   ;;
+    5)   MODEL_DEVICE="hailo" ;;
+    *)   MODEL_DEVICE="cpu"   ;;
+esac
 
 case "$device_choice" in
     2)
@@ -223,14 +246,13 @@ mkdir -p "$SCRIPT_DIR/data"
 mkdir -p "$SCRIPT_DIR/models"
 
 # ── config ─────────────────────────────────────────────────────────────────────
-# The four hardware-agnostic files can be copied straight from the samples —
-# they don't need per-device edits before the pipeline can at least start.
-# models.yaml / cameras.yaml / device.yaml are intentionally NOT auto-copied:
-# they need real device-specific values (model paths, camera sources, device
-# identity) that no script can safely guess.
+# Every file here is copied as-is from config_sample/ — none of them get real
+# content generated. Camera sources, model paths, device identity, and every
+# other business-specific value are filled in manually after this script
+# finishes, which is what keeps this installer identical for any deployment.
 mkdir -p "$SCRIPT_DIR/config"
-info "Copying hardware-agnostic config files (skipping any that already exist)..."
-for f in api notifications rules collection; do
+info "Copying config templates (skipping any that already exist)..."
+for f in api notifications rules collection device models cameras; do
     dest="$SCRIPT_DIR/config/$f.yaml"
     src="$SCRIPT_DIR/config/config_sample/$f.sample.yaml"
     if [ -f "$dest" ]; then
@@ -241,19 +263,8 @@ for f in api notifications rules collection; do
     fi
 done
 
-missing=()
-for f in device.yaml models.yaml cameras.yaml; do
-    [ -f "$SCRIPT_DIR/config/$f" ] || missing+=("$f")
-done
-if [ ${#missing[@]} -gt 0 ]; then
-    warn "Still need real, device-specific values in: ${missing[*]}"
-    warn "See config/config_sample/ for a fully-commented reference of each field."
-else
-    info "All config files present"
-fi
-
 if [ -z "$(ls -A "$SCRIPT_DIR/models" 2>/dev/null)" ]; then
-    warn "models/ is empty — copy your model weights (.pt/.onnx/.engine/.hef) there before running"
+    warn "models/ is empty — copy your model weight file there before editing config/models.yaml"
 fi
 
 # ── done ──────────────────────────────────────────────────────────────────────
