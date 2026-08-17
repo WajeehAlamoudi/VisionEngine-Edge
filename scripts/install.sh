@@ -11,10 +11,55 @@ REQUIRED_PYTHON_MAJOR=3
 REQUIRED_PYTHON_MINOR=10
 
 # ── colours ───────────────────────────────────────────────────────────────────
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
+
+# ── banner ─────────────────────────────────────────────────────────────────────
+print_banner() {
+    echo -e "${CYAN}"
+    cat <<'BANNER'
+  ██╗   ██╗██╗███████╗██╗ ██████╗ ███╗   ██╗    ███████╗██████╗  ██████╗ ███████╗
+  ██║   ██║██║██╔════╝██║██╔═══██╗████╗  ██║    ██╔════╝██╔══██╗██╔════╝ ██╔════╝
+  ██║   ██║██║███████╗██║██║   ██║██╔██╗ ██║    █████╗  ██║  ██║██║  ███╗█████╗
+  ╚██╗ ██╔╝██║╚════██║██║██║   ██║██║╚██╗██║    ██╔══╝  ██║  ██║██║   ██║██╔══╝
+   ╚████╔╝ ██║███████║██║╚██████╔╝██║ ╚████║    ███████╗██████╔╝╚██████╔╝███████╗
+    ╚═══╝  ╚═╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚══════╝╚═════╝  ╚═════╝ ╚══════╝
+BANNER
+    echo -e "${NC}"
+    echo -e "  ${BOLD}Edge-native computer vision. Detect. Track. Ingest.${NC}"
+    echo ""
+}
+
+# ── spinner ────────────────────────────────────────────────────────────────────
+# Runs a command in the background with a live spinner in front of it — mainly
+# for the --quiet pip steps below, which otherwise print nothing for a while
+# and make it look like the installer has frozen.
+run_with_spinner() {
+    local label="$1"; shift
+    local log; log="$(mktemp)"
+    ("$@" >"$log" 2>&1) &
+    local pid=$!
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r  ${CYAN}%s${NC} %s" "${frames:$i:1}" "$label"
+        i=$(( (i + 1) % ${#frames} ))
+        sleep 0.1
+    done
+    if wait "$pid"; then
+        printf "\r${GREEN}[✓]${NC} %s          \n" "$label"
+        rm -f "$log"
+        return 0
+    else
+        printf "\r${RED}[✗]${NC} %s          \n" "$label"
+        echo "  ── output ──"
+        cat "$log"
+        rm -f "$log"
+        error "Step failed: $label"
+    fi
+}
 
 # ── validated input ────────────────────────────────────────────────────────────
 # Every interactive prompt in this script goes through one of these three —
@@ -59,10 +104,7 @@ prompt_yes_no() {
     done
 }
 
-echo ""
-echo "  VisionEngine Edge — installer"
-echo "  ──────────────────────────────"
-echo ""
+print_banner
 
 # ── python version check ──────────────────────────────────────────────────────
 PYTHON=""
@@ -156,13 +198,11 @@ fi
 PIP="$VENV_DIR/bin/pip"
 PYTHON_VENV="$VENV_DIR/bin/python"
 
-info "Upgrading pip..."
-"$PIP" install --quiet --upgrade pip
+run_with_spinner "Upgrading pip..." "$PIP" install --quiet --upgrade pip
 
 # ── torch (device-specific, if needed) ────────────────────────────────────────
 if [ -n "$TORCH_INSTALL_CMD" ]; then
-    info "Installing torch for this device..."
-    eval "$TORCH_INSTALL_CMD"
+    run_with_spinner "Installing torch for this device..." bash -c "$TORCH_INSTALL_CMD"
 fi
 
 # ── dependencies ──────────────────────────────────────────────────────────────
@@ -170,8 +210,7 @@ fi
 # just set up above (system-wide via --system-site-packages, CPU-only, or
 # left to the default PyPI resolution) — it will not be reinstalled or
 # overridden here.
-info "Installing dependencies from requirements.txt..."
-"$PIP" install --quiet -r "$SCRIPT_DIR/requirements.txt"
+run_with_spinner "Installing dependencies from requirements.txt..." "$PIP" install --quiet -r "$SCRIPT_DIR/requirements.txt"
 
 # ── runtime directories ───────────────────────────────────────────────────────
 info "Creating runtime directories..."
@@ -219,7 +258,8 @@ fi
 
 # ── done ──────────────────────────────────────────────────────────────────────
 echo ""
-echo "  ── Installation complete ──────────────────────────────────"
+echo -e "  ${GREEN}${BOLD}✓ VisionEngine Edge is ready on this device${NC}"
+echo -e "  ${CYAN}────────────────────────────────────────────${NC}"
 echo ""
 if [ -n "$POST_INSTALL_NOTE" ]; then
     warn "$POST_INSTALL_NOTE"
