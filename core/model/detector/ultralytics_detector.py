@@ -44,16 +44,20 @@ class UltralyticsDetector(Detector):
     def infer(self, frame, active_classes: list[str]) -> list[InferenceResult]:
         indices = self._class_indices(active_classes)
         w, h = self._cfg.input_size
-        results = self._model.predict(
-            frame,
+        predict_kwargs = dict(
             conf=self._cfg.confidence_threshold,
             iou=self._cfg.iou_threshold,
             imgsz=(h, w),
             classes=indices or None,
-            device=self._device,
-            half=self._half,
             verbose=False,
         )
+        # A .mlpackage's execution target (CPU/GPU/Neural Engine) is fixed
+        # at export time — Ultralytics' CoreML backend doesn't accept a
+        # device=/half= override the way its torch backends do.
+        if self._cfg.device != "coreml":
+            predict_kwargs["device"] = self._device
+            predict_kwargs["half"] = self._half
+        results = self._model.predict(frame, **predict_kwargs)
         return self._parse(results)
 
     def _class_indices(self, active_classes: list[str]) -> list[int]:

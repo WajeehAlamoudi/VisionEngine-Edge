@@ -193,3 +193,28 @@ models:
     use_tracker: false
     tracker: "botsort.yaml"
     half: false
+
+
+  # ── model 5: CoreML compiled (Mac Mini M-series) ────────────────────────────
+  # Same weights as general_coco but exported to CoreML for the Apple Neural
+  # Engine. The .mlpackage's execution target is fixed at export time, so
+  # half: is always ignored here (see UltralyticsDetector.infer).
+
+  - id: general_coco_coreml
+    name: "YOLOv8 General COCO — CoreML"
+    version: "1.0.0"
+    path: "./models/yolov8n.mlpackage"
+    device: coreml
+    classes:
+      - person
+      - bicycle
+      - car
+      - motorcycle
+      - bus
+      - truck
+    confidence_threshold: 0.5
+    iou_threshold: 0.45
+    input_size: [640, 640]
+    use_tracker: false
+    tracker: "botsort.yaml"
+    half: false

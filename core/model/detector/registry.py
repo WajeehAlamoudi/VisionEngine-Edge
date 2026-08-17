@@ -12,18 +12,20 @@ _BACKENDS: dict[str, type[Detector]] = {
     "hailo": HailoDetector,
 }
 
-# Device (models.yaml `device:` value) → the backend that runs it. Every
-# device here is one Ultralytics/torch itself can hand off to via its own
-# `device=` argument — "auto" is resolved to one of cpu/cuda/mps first (see
-# core/model/device.py), the other three are passed straight through.
-# Hailo is the only device that isn't a torch device at all — it never goes
-# through Ultralytics, it runs entirely on HailoRT.
+# Device (models.yaml `device:` value) → the backend that runs it. auto/cpu/
+# cuda/mps are torch devices Ultralytics hands off to via its own `device=`
+# argument ("auto" is resolved to one of cpu/cuda/mps first, see
+# core/model/device.py). coreml also runs through Ultralytics, but a
+# .mlpackage's execution target is fixed at export time, not by `device=`
+# (see UltralyticsDetector.infer). Hailo isn't a torch device at all — it
+# never goes through Ultralytics, it runs entirely on HailoRT.
 _DEVICE_BACKENDS: dict[str, str] = {
-    "auto":  "ultralytics",
-    "cpu":   "ultralytics",
-    "cuda":  "ultralytics",
-    "mps":   "ultralytics",
-    "hailo": "hailo",
+    "auto":   "ultralytics",
+    "cpu":    "ultralytics",
+    "cuda":   "ultralytics",
+    "mps":    "ultralytics",
+    "coreml": "ultralytics",
+    "hailo":  "hailo",
 }
 
 
