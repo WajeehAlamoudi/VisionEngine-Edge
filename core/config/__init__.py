@@ -219,7 +219,12 @@ def load_config(config_dir: Path | str = "config") -> AppConfig:
     cameras = [_parse_camera(c, device.fps_target) for c in _load_yaml(d / "cameras.yaml")["cameras"]]
     rules = [_parse_rule(r) for r in _load_yaml(d / "rules.yaml")["rules"]]
     notifications = _parse_notifications(_load_yaml(d / "notifications.yaml")["notifications"])
-    collection = _parse_collection(_load_yaml(d / "collection.yaml")["collection"])
+
+    # collection is an optional parallel feature (dataset building) — unlike
+    # the files above, a blank/empty file means "not configured", not a
+    # config error, so it degrades to zero sessions instead of raising.
+    collection_raw = _load_yaml(d / "collection.yaml")
+    collection = _parse_collection((collection_raw or {}).get("collection", []))
 
     cfg = AppConfig(
         device=device,
