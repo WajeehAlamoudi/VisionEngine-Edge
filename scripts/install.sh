@@ -16,6 +16,49 @@ info()  { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 error() { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 
+# ── validated input ────────────────────────────────────────────────────────────
+# Every interactive prompt in this script goes through one of these three —
+# reject anything that isn't a real answer and ask again, instead of silently
+# falling through to a default that may be wrong for this device.
+
+# $1 = prompt text, $2 = default value, $3 = space-separated list of valid values
+prompt_choice() {
+    local prompt="$1" default="$2" valid="$3" answer v
+    while true; do
+        read -r -p "$prompt [$default]: " answer
+        answer="${answer:-$default}"
+        for v in $valid; do
+            [ "$answer" = "$v" ] && { echo "$answer"; return 0; }
+        done
+        echo "  Not a valid choice — enter one of: $valid" >&2
+    done
+}
+
+# $1 = prompt text — accepts digits only, no default (a number is required)
+prompt_number() {
+    local prompt="$1" answer
+    while true; do
+        read -r -p "$prompt: " answer
+        [[ "$answer" =~ ^[0-9]+$ ]] && { echo "$answer"; return 0; }
+        echo "  Not a valid number — digits only, try again." >&2
+    done
+}
+
+# $1 = prompt text, $2 = default ("y" or "n") — echoes "y" or "n"
+prompt_yes_no() {
+    local prompt="$1" default="${2:-n}" answer label
+    [ "$default" = "y" ] && label="Y/n" || label="y/N"
+    while true; do
+        read -r -p "$prompt [$label]: " answer
+        answer="${answer:-$default}"
+        case "$answer" in
+            [Yy]|[Yy][Ee][Ss]) echo "y"; return 0 ;;
+            [Nn]|[Nn][Oo])     echo "n"; return 0 ;;
+            *) echo "  Please answer y or n." >&2 ;;
+        esac
+    done
+}
+
 echo ""
 echo "  VisionEngine Edge — installer"
 echo "  ──────────────────────────────"
@@ -49,8 +92,7 @@ echo "    3) Generic PC/server with an NVIDIA GPU (CUDA)"
 echo "    4) Mac (Apple Silicon / MPS)"
 echo "    5) Raspberry Pi + Hailo accelerator"
 echo ""
-read -r -p "  Choice [1]: " device_choice
-device_choice="${device_choice:-1}"
+device_choice="$(prompt_choice "  Choice" "1" "1 2 3 4 5")"
 
 USE_SYSTEM_SITE_PACKAGES=0
 TORCH_INSTALL_CMD=""
@@ -70,14 +112,14 @@ case "$device_choice" in
         else
             warn "No working CUDA torch found system-wide."
             echo ""
-            read -r -p "  JetPack major version (e.g. 6): " jp_version
-            read -r -p "  CUDA version on this JetPack, no dot (e.g. 126 for 12.6): " cuda_version
+            jp_version="$(prompt_number "  JetPack major version (e.g. 6)")"
+            cuda_version="$(prompt_number "  CUDA version on this JetPack, no dot (e.g. 126 for 12.6)")"
             echo ""
             warn "Run this BEFORE re-running this installer, so the venv can find it:"
             echo "    $PYTHON -m pip install torch torchvision --index-url https://pypi.jetson-ai-lab.io/jp${jp_version}/cu${cuda_version}"
             echo ""
-            read -r -p "  Continue anyway without confirmed GPU torch? [y/N]: " cont
-            [[ "$cont" =~ ^[Yy]$ ]] || error "Install the wheel above, then re-run this script."
+            cont="$(prompt_yes_no "  Continue anyway without confirmed GPU torch?" "n")"
+            [ "$cont" = "y" ] || error "Install the wheel above, then re-run this script."
         fi
         ;;
     3)
