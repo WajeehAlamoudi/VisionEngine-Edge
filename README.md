@@ -148,6 +148,7 @@ Isolate `HailoDetector`'s inference call into its own dedicated environment (a s
 ### 1 — Clone
 
 ```bash
+sudo mkdir -p /opt/visionengine && sudo chown -R $USER:$USER /opt/visionengine
 git clone https://github.com/WajeehAlamoudi/VisionEngine-Edge.git /opt/visionengine
 cd /opt/visionengine
 ```
@@ -155,36 +156,37 @@ cd /opt/visionengine
 ### 2 — Install
 
 ```bash
-python -m venv venv && source venv/bin/activate
-
-# Standard (CPU / CUDA / MPS)
-pip install -r requirements.txt --timeout 300
-
-# Raspberry Pi — CPU-only torch (saves ~1 GB)
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt --timeout 300
+bash scripts/install.sh
 ```
+
+One interactive script, one entry point for every supported device. It asks what hardware this is (Raspberry Pi / CPU, Jetson, generic CUDA PC, Mac, Hailo) and sets up torch correctly for that device — including reusing an already-working Jetson torch instead of shadowing it with a broken generic build, which a plain `pip install` would do silently. It also creates `.venv`, installs everything in `requirements.txt`, creates `models/`, `data/`, `logs/`, `collected/`, and copies the four hardware-agnostic config files (`api.yaml`, `notifications.yaml`, `rules.yaml`, `collection.yaml`) from their samples automatically.
 
 ### 3 — Configure
 
-Copy the sample files and fill them in:
+The installer copies four of the seven config files for you. Three remain, since no script can safely guess a camera's RTSP URL or a device's identity:
 
 ```bash
-cp config/config_sample/api.sample.yaml          config/api.yaml
-cp config/config_sample/cameras.sample.yaml      config/cameras.yaml
-cp config/config_sample/device.sample.yaml       config/device.yaml
-cp config/config_sample/models.sample.yaml       config/models.yaml
-cp config/config_sample/notifications.sample.yaml config/notifications.yaml
-cp config/config_sample/rules.sample.yaml        config/rules.yaml
+cp config/config_sample/models.sample.yaml  config/models.yaml   # model path, device, classes
+cp config/config_sample/cameras.sample.yaml config/cameras.yaml  # camera source, model binding
+cp config/config_sample/device.sample.yaml  config/device.yaml   # device id, name, location
 ```
 
-### 4 — Run
+Fill in all three — every field is documented inline in the matching `.sample.yaml`.
+
+### 4 — Model weights
+
+Not included in the repo (gitignored — they're large binaries). Place your `.pt`/`.onnx`/`.engine`/`.hef` file in `models/`, matching the `path:` you set in `models.yaml`.
+
+### 5 — Run
 
 ```bash
+source .venv/bin/activate
 python main.py
 # custom config directory
 python main.py --config /etc/visionengine
 ```
+
+Or run it as a proper background service instead of a manual terminal session — see [Deployment](#deployment) below.
 
 ---
 
@@ -406,6 +408,9 @@ filter_and_tag() returns:
 VisionEngine-Edge/
 ├── main.py                     ← entry point
 ├── requirements.txt
+├── scripts/
+│   ├── install.sh              ← interactive setup — one entry point for every device
+│   └── service.sh              ← install/start/stop/logs as a systemd service
 ├── config/                     ← deployment config (fill in, never commit secrets)
 │   ├── api.yaml
 │   ├── cameras.yaml
@@ -434,75 +439,20 @@ VisionEngine-Edge/
 
 ## Deployment
 
-<details>
-<summary><strong>Raspberry Pi setup (full walkthrough)</strong></summary>
+Setup is the [Quick Start](#quick-start) above (`scripts/install.sh`) on whatever device you're deploying to — Raspberry Pi, Jetson, a Hailo-equipped Pi, a Mac, or a generic PC, same one script either way.
+
+For running it as a proper background service instead of a manual terminal session, `scripts/service.sh` manages a `systemd` unit for you — no unit file to write or `.venv` path to get right by hand:
 
 ```bash
-# 1. Install system dependencies
-sudo apt-get update && sudo apt-get install -y python3-pip python3-venv libopencv-dev
-
-# 2. Create install directory
-sudo mkdir -p /opt/visionengine
-sudo chown -R $USER:$USER /opt/visionengine
-
-# 3. Clone
-git clone https://github.com/WajeehAlamoudi/VisionEngine-Edge.git /opt/visionengine
-cd /opt/visionengine
-
-# 4. Virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# 5. Install (CPU-only torch saves ~1 GB on the Pi)
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt --timeout 300
-
-# 6. Download a model
-mkdir -p models
-# place your .pt or .hef file in ./models/
-
-# 7. Fill config
-nano config/api.yaml       # branch_id + key + url
-nano config/cameras.yaml   # camera source + model_id
-nano config/device.yaml    # device id + name + location
-nano config/models.yaml    # model path + classes
-nano config/rules.yaml     # at least one rule
-
-# 8. Run
-python main.py
+sudo bash scripts/service.sh install    # create and enable the service (run once)
+sudo bash scripts/service.sh start      # start it
+     bash scripts/service.sh status     # check it's running
+     bash scripts/service.sh logs       # tail live logs (Ctrl+C to exit)
+sudo bash scripts/service.sh restart    # restart after a config change
+sudo bash scripts/service.sh uninstall  # remove the service — config and data are kept
 ```
 
-</details>
-
-<details>
-<summary><strong>Run as a systemd service</strong></summary>
-
-```ini
-# /etc/systemd/system/visionengine-edge.service
-[Unit]
-Description=VisionEngine Edge Pipeline
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/opt/visionengine
-ExecStart=/opt/visionengine/venv/bin/python main.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable visionengine-edge
-sudo systemctl start visionengine-edge
-sudo journalctl -u visionengine-edge -f
-```
-
-</details>
+The service runs as whichever user ran `install`, restarts automatically on failure, and starts on boot.
 
 ---
 
