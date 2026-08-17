@@ -38,7 +38,11 @@ def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference")
         return
 
     log.info("loading model '%s' from %s ...", cam.model_id, model_cfg.path)
-    runner = ModelRunner(cfg=model_cfg)
+    runner = ModelRunner(
+        cfg=model_cfg,
+        use_tracker=model_cfg.use_tracker,
+        tracker=model_cfg.tracker,
+    )
     runner.load()
     log.info("model ready — opening camera '%s'", camera_id)
 
