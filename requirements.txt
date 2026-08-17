@@ -18,8 +18,18 @@ PyYAML>=6.0.0               # YAML config file parsing
 # CPU-only (smaller download, good for Raspberry Pi / Mac Mini CPU mode):
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 #
-# NVIDIA Jetson: do NOT install from PyPI — use the NVIDIA-provided wheel:
-#   https://developer.nvidia.com/embedded/pytorch
+# NVIDIA Jetson: do NOT let this line install torch from PyPI — it will
+# succeed silently with a non-GPU build, since generic PyPI wheels have no
+# way to know they're not running on the JetPack/L4T CUDA stack.
+#   1. Confirm torch already works: python3 -c "import torch; print(torch.cuda.is_available())"
+#   2. If it's already installed system-wide with CUDA (typical on factory
+#      images), create the venv with --system-site-packages so this
+#      requirements.txt install reuses it instead of shadowing it with a
+#      wrong build:
+#        python3 -m venv .venv --system-site-packages
+#   3. If torch isn't already present, install it from the JetPack-specific
+#      index first (swap jp6/cu126 for your actual JetPack/CUDA version):
+#        https://pypi.jetson-ai-lab.io/jp6/cu126
 #
 # Hailo-8: torch is not used for inference (Hailo runtime handles it).
 #   Install CPU-only torch for config validation, or set device: cpu in models.yaml.
