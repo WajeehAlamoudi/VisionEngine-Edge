@@ -36,32 +36,46 @@ Every detected object is enriched with spatial context, matched against configur
 
 ---
 
+## Documentation
+
+This README is the front door. The full guides live in **[`docs/`](docs/)**.
+
+| Guide | Answers |
+|---|---|
+| **[Architecture](docs/ARCHITECTURE.md)** | How the pipeline works — backends, TensorRT, tracking, ReID, zones, benchmarks |
+| **[Configuration](docs/CONFIGURATION.md)** | What each of the 8 YAML files owns, and how they reference each other |
+| **[Data Model](docs/DATA_MODEL.md)** | Every column of `detections`, `notifications`, `nodes` — and what it means |
+| **[Deployment](docs/DEPLOYMENT.md)** | Backend → database → edge → dashboard, end to end |
+| **[Tools](docs/TOOLS.md)** | Running the agent, the debug tool, the service, reading the logs |
+
+---
+
 ## Pipeline
 
 ```
                     ┌─────────────────────────────────────────────────────┐
                     │                  EDGE DEVICE                        │
                     │                                                     │
-  Camera Stream ───►│  cap.read()                                         │
+  Camera Stream ───►│  cap.read()  ── timestamped here                    │
   USB / RTSP        │      │                                              │
                     │   FPS throttle                                      │
                     │      │                                              │
-                    │   ModelRunner.run()          BoT-SORT tracker       │
-                    │   YOLO predict / track  ◄──  (optional, per model)  │
+                    │   ModelRunner.run()          BoT-SORT + OSNet ReID  │
+                    │   detector backend      ◄──  (optional, per model)  │
                     │      │                                              │
                     │   enrich()                                          │
                     │   zone tag · anchor · normalize                     │
                     │      │                                              │
                     │   RulesEngine.filter_and_tag()                      │
                     │      │                                              │
-                    │   ┌──┴──────────────┐                              │
-                    │   │  no rule match  │──► discard                   │
-                    │   └─────────────────┘                              │
+                    │   ┌──┴──────────────┐                               │
+                    │   │  no rule match  │──► discard                    │
+                    │   └─────────────────┘                               │
                     │      │ matched                                      │
                     │      │                                              │
                     │   detection_row()    notification_row()             │
                     │      │                     │                        │
-                    │      └──────────┬──────────┘                       │
+                    │      └──────────┬──────────┘                        │
                     │                 │                                   │
                     │           buffer.write()                            │
                     │           SQLite  [offline-resilient]               │
@@ -80,34 +94,39 @@ Every detected object is enriched with spatial context, matched against configur
                               └───────────────┘
 ```
 
+One pipeline per camera, each an independent task — a failing camera does not stop the others. Walkthrough in [Architecture](docs/ARCHITECTURE.md#the-pipeline).
+
 ---
 
 ## Features
 
-- **YOLO inference** via [ultralytics](https://ultralytics.com) — any `.pt`, `.onnx`, `.tflite`, `.hef` model
-- **BoT-SORT tracking** — persistent `track_id` per object across frames, per-model toggle
-- **Zone detection** — polygon zones in native camera resolution, click-to-draw debug tool
-- **Rules engine** — filter, notify, cooldown — per class, per camera, per zone
-- **Offline buffer** — SQLite WAL, survives network outages, exponential backoff on retry
-- **Heartbeat** — device health rows pushed to `nodes` table on a configurable interval
+- **Detection backends** — Ultralytics (`.pt`, `.engine`, `.mlpackage`) and Hailo (`.hef`), each importing its SDK lazily so one device's runtime can't break another's
+- **BoT-SORT tracking** with **OSNet ReID** — persistent `track_id` across frames and occlusion, per-model toggle
+- **TensorRT acceleration** — detector and ReID both run as compiled engines; see the [benchmark](docs/ARCHITECTURE.md#benchmark)
+- **Zone analytics** — polygon zones in native camera resolution, click-to-draw builder, person membership tested at the feet
+- **Rules engine** — the gate for storage *and* alerts, per class, camera, zone, with cooldown
+- **Strict configuration** — no defaults anywhere; a missing or out-of-range key stops startup with the file, field, and expectation named
+- **Offline buffer** — SQLite WAL, survives network outages, replays with original capture timestamps
+- **Heartbeat** — device health rows pushed to `nodes`, plus an optional local health file
 - **Dataset collection** — frame sampler with schedule, filters, and save modes
 - **Debug tool** — three live modes: view stream, draw zones, run inference overlay
-- **Hardware agnostic** — CPU, CUDA, and Apple MPS all work with a single `device:` change in `models.yaml`; Hailo runs through its own dedicated backend (see [Hailo Backend](#hailo-backend) below — more involved than a config change)
 
 ---
 
 ## Hardware
 
-| Device | Inference | Recommended FPS | Status |
-|--------|-----------|-----------------|--------|
+| Device | Inference | FPS / camera | Status |
+|--------|-----------|--------------|--------|
 | Raspberry Pi 4 (CPU) | PyTorch `.pt` | 1–2 | Verified |
 | Raspberry Pi 5 (CPU) | PyTorch `.pt` | 2–3 | Verified |
 | Raspberry Pi + Hailo-8/8L | Hailo `.hef` | TBD | Blocked — see [Hailo Backend](#hailo-backend) |
+| **Jetson Orin NX** | **TensorRT `.engine` + TensorRT ReID** | **9.6–10.7** | **Verified** — 4 cameras @ 960×480, ~41 fps aggregate |
 | Jetson Nano | CUDA `.pt` | 5–8 | Estimated |
-| Jetson Orin | CUDA `.pt` | 15–30 | Estimated |
 | Mac Mini (M-series) | MPS / CoreML | 10–20 | Estimated |
 
-FPS figures not marked "Verified" are estimates, not measurements — treat them as a starting expectation, not a spec.
+The Jetson figures are measured with tracking and appearance matching **on** throughout, over 10-second windows with people in frame. The same hardware managed 4.0–4.7 fps/camera before the ReID model was moved to TensorRT — full per-stage breakdown in [Architecture § Benchmark](docs/ARCHITECTURE.md#benchmark).
+
+Figures marked "Estimated" are not measurements — treat them as a starting expectation, not a spec.
 
 ---
 
@@ -122,6 +141,8 @@ CPU, CUDA, and MPS all run through the same Ultralytics/torch code path — swap
   1. **Convert** `.pt → .hef` using Ultralytics' export (`yolo export model=X.pt format=hailo name=hailo8`) plus Hailo's Dataflow Compiler. This step only runs on **x86_64 Linux with Python 3.10** — not on the edge device itself (Hailo compilation isn't supported on ARM), and not on any other Python version (the Dataflow Compiler is only built for 3.10).
   2. **Deploy** the resulting `.hef` *and* its accompanying `metadata.yaml` (written alongside it by the export) together to the edge device — `HailoDetector` reads the model's real class list from `metadata.yaml` at load time, since a `.hef` carries no class names of its own. Copying the `.hef` alone is not sufficient.
 - Only **YOLOv8, YOLO11, and YOLO26** architectures can export to Hailo format today. Other YOLO versions (e.g. YOLOv12) are rejected by Ultralytics' own exporter before it even reaches the Hailo compiler — this is not a configuration problem and can't be worked around from this codebase.
+
+This is the mirror image of TensorRT, where the engine must be built **on** the device that runs it. Getting the two backwards costs an afternoon.
 
 ### Known limitation — dependency conflict on-device
 
@@ -145,6 +166,8 @@ Isolate `HailoDetector`'s inference call into its own dedicated environment (a s
 
 ## Quick Start
 
+Standing up a new device for real — including the branch, the database schema, and the model exports — is [Deployment](docs/DEPLOYMENT.md). This is the short path.
+
 ### 1 — Clone
 
 ```bash
@@ -159,23 +182,27 @@ cd /opt/visionengine
 bash scripts/install.sh
 ```
 
-One interactive script, one entry point for every supported device. It asks what hardware this is (Raspberry Pi / CPU, Jetson, generic CUDA PC, Mac, Hailo) and sets up torch correctly for that device — including reusing an already-working Jetson torch instead of shadowing it with a broken generic build, which a plain `pip install` would do silently. It also creates `.venv`, installs everything in `requirements.txt`, creates `models/`, `data/`, `logs/`, `collected/`, and copies the four hardware-agnostic config files (`api.yaml`, `notifications.yaml`, `rules.yaml`, `collection.yaml`) from their samples automatically.
+One interactive script, one entry point for every supported device. It asks what hardware this is (Raspberry Pi / CPU, Jetson, generic CUDA PC, Mac, Hailo) and sets up torch correctly for that device — including reusing an already-working Jetson torch instead of shadowing it with a broken generic build, which a plain `pip install` would do silently. It creates `.venv`, installs `requirements.txt`, creates `models/`, `data/`, `logs/`, `collected/`, and copies **all eight** config templates from `config/config_sample/` into `config/`.
+
+It copies templates only — it never generates config content. Filling in real values is a deliberate, reviewable act.
 
 ### 3 — Configure
 
-The installer copies four of the seven config files for you. Three remain, since no script can safely guess a camera's RTSP URL or a device's identity:
+Every one of the eight files needs real values before the device will start. There are **no defaults**: a missing, mistyped, or out-of-range key stops startup with the file and field named.
+
+Each field is documented inline in the matching `.sample.yaml`. What each *file* owns, and how they reference each other, is in [Configuration](docs/CONFIGURATION.md).
+
+Check your work without starting the pipeline:
 
 ```bash
-cp config/config_sample/models.sample.yaml  config/models.yaml   # model path, device, classes
-cp config/config_sample/cameras.sample.yaml config/cameras.yaml  # camera source, model binding
-cp config/config_sample/device.sample.yaml  config/device.yaml   # device id, name, location
+python3 -c "from core.config import load_config; c = load_config('config'); print('OK:', len(c.cameras), 'cameras')"
 ```
-
-Fill in all three — every field is documented inline in the matching `.sample.yaml`.
 
 ### 4 — Model weights
 
-Not included in the repo (gitignored — they're large binaries). Place your `.pt`/`.onnx`/`.engine`/`.hef` file in `models/`, matching the `path:` you set in `models.yaml`.
+Not included in the repo (gitignored — they're large binaries). Place your `.pt` / `.engine` / `.mlpackage` / `.hef` file in `models/`, matching the `path:` you set in `models.yaml`.
+
+A TensorRT `.engine` must be exported **on** the device that will run it. Both the detector and the ReID exports are in [Deployment § Stage 3](docs/DEPLOYMENT.md#stage-3--edge-device).
 
 ### 5 — Run
 
@@ -186,219 +213,94 @@ python main.py
 python main.py --config /etc/visionengine
 ```
 
-Or run it as a proper background service instead of a manual terminal session — see [Deployment](#deployment) below.
+Every 10 seconds each camera logs its measured throughput. Read that before tuning anything — see [Tools § Reading the logs](docs/TOOLS.md#reading-the-logs).
+
+Or run it as a background service — see [Deployment](#deployment) below.
 
 ---
 
 ## Configuration
 
-Seven files. Each has one responsibility.
+Eight files, each with one responsibility.
 
 ```
 config/
-├── api.yaml            ← branch_id, API key, ingest batch settings
-├── cameras.yaml        ← camera sources, model binding, zones, routing
-├── device.yaml         ← device identity, FPS, tracker, heartbeat, buffer
-├── models.yaml         ← model paths, classes, confidence, tracker toggle
-├── rules.yaml          ← filter rules, notification rules, cooldowns
-├── notifications.yaml  ← webhook targets (VisionEngine, Slack, Teams, custom)
-├── collection.yaml     ← dataset collection sessions (optional)
-└── config_sample/      ← fully-commented reference for every field
-    ├── api.sample.yaml
-    ├── cameras.sample.yaml
-    ├── device.sample.yaml
-    ├── models.sample.yaml
-    ├── notifications.sample.yaml
-    ├── rules.sample.yaml
-    └── collection.sample.yaml
+├── api.yaml              ← branch_id, API key, ingest batching, offline buffer
+├── device.yaml           ← device identity, log level, heartbeat, health file
+├── cameras.yaml          ← camera sources, model binding, classes, zones, routing
+├── models.yaml           ← model paths, devices, classes, thresholds, tracker toggle
+├── rules.yaml            ← what is stored, and what raises an alert
+├── notifications.yaml    ← log channel and webhook delivery, per-rule routing
+├── collection.yaml       ← dataset collection sessions (optional)
+├── botsort_tracker.yaml  ← tracker tuning + ReID backend, device-specific
+└── config_sample/        ← fully-commented reference for every field
 ```
 
-### Default 3-Table Setup
+`botsort_tracker.yaml` is the odd one out: it is read at model load time from the path in `models.yaml` → `tracker`, only when `use_tracker: true`, and is **not** covered by strict validation.
 
-The default configuration writes to exactly three tables in your branch schema:
+Two conventions run through all of them:
 
-| Table | Written by | Content |
-|-------|-----------|---------|
-| `detections` | `detection_row()` | One row per detection — all classes, all cameras |
-| `notifications` | `notification_row()` | One row per alert fired by a rule |
-| `nodes` | `_heartbeat_row()` | Device health pulse on a configurable interval |
+- **`"*"` means all.** An empty list is rejected wherever it would be ambiguous — `"*"` is a decision you wrote, `[]` is usually a deleted last entry.
+- **`null` means "not set", and the key is still required.** Absent is an oversight; `null` is a choice.
 
-Table names are set in YAML — change them at any time without touching code.
+**`rules.yaml` gates storage, not just alerts.** A detection matching no enabled rule is discarded before the buffer — so a class no rule mentions never reaches the database. Full detail in [Configuration](docs/CONFIGURATION.md).
 
-### BoT-SORT Tracker
+### Tracking
 
-Enable per model in `models.yaml`. All cameras using that model get persistent `track_id` values — no per-camera config needed.
+Enable per model in `models.yaml`. Every camera using that model gets persistent `track_id` values.
 
 ```yaml
 # models.yaml
 models:
-  - id: general_yolo12n
-    path: ./models/yolov12n.pt
-    use_tracker: true       # ← flip this ON
-    ...
-```
-
-```yaml
-# device.yaml
-device:
-  tracker: "botsort.yaml"   # botsort.yaml | bytetrack.yaml | custom path
+  - id: general_coco
+    path: ./models/yolo26n.engine
+    device: cuda
+    use_tracker: true                        # ← flip this ON
+    tracker: "config/botsort_tracker.yaml"   # ← tracker params live here
 ```
 
 Cameras sharing a model with `use_tracker: false` share one model instance (RAM efficient). Cameras with `use_tracker: true` each get a dedicated instance — tracker state is per-camera.
 
+One value in `botsort_tracker.yaml` deserves attention: `frame_rate` must be the camera's **measured** rate, not `fps_target`. It scales how long a lost track is remembered, and a stale value silently breaks identity in whichever direction is worse. See [Architecture § Tracking](docs/ARCHITECTURE.md#tracking).
+
 ---
 
-## Database Schema
+## Database
+
+Three tables per branch schema, written entirely by the edge:
+
+| Table | Written by | Content |
+|-------|-----------|---------|
+| `detections` | `detection_row()` | One row per detected object per frame that matched a rule |
+| `notifications` | `notification_row()` | One row per alert fired by a rule |
+| `nodes` | `_heartbeat_row()` | Device health pulse on a configurable interval |
+
+Table names come from config — `raw_table` and `routing[].table` in `cameras.yaml`, `notifications_table` per rule — so one camera can split people and vehicles into separate tables.
+
+**They are not created automatically.** Creating a branch provisions only `dashboard_config`; the three data tables and their indexes are a manual step, and skipping it produces no error — the dashboard just stays empty. The DDL is in [Deployment § Stage 2](docs/DEPLOYMENT.md#stage-2--provision-the-branch-schema).
+
+Every column, what it means, and how to aggregate it correctly is in [Data Model](docs/DATA_MODEL.md). The short version of the most common mistake:
 
 ```sql
--- All detections from all cameras and classes
-CREATE TABLE <schema>.detections (
-    id            BIGSERIAL PRIMARY KEY,
-    camera_id     TEXT,          camera_name  TEXT,
-    model_id      TEXT,          track_id     TEXT,
-    class         TEXT,          confidence   NUMERIC,
-    bbox_x1       INTEGER,       bbox_y1      INTEGER,
-    bbox_x2       INTEGER,       bbox_y2      INTEGER,
-    bbox_w        INTEGER,       bbox_h       INTEGER,
-    anchor_x      NUMERIC,       anchor_y     NUMERIC,
-    anchor_x_norm NUMERIC,       anchor_y_norm NUMERIC,
-    frame_w       INTEGER,       frame_h      INTEGER,
-    zone          TEXT,          ts           TIMESTAMPTZ
-);
-
--- One row per alert fired by a rule
-CREATE TABLE <schema>.notifications (
-    id            BIGSERIAL PRIMARY KEY,
-    rule_name     TEXT,          severity     TEXT,
-    message       TEXT,
-    camera_id     TEXT,          camera_name  TEXT,
-    model_id      TEXT,          track_id     TEXT,
-    class         TEXT,          confidence   NUMERIC,
-    bbox_x1       INTEGER,       bbox_y1      INTEGER,
-    bbox_x2       INTEGER,       bbox_y2      INTEGER,
-    bbox_w        INTEGER,       bbox_h       INTEGER,
-    anchor_x      NUMERIC,       anchor_y     NUMERIC,
-    anchor_x_norm NUMERIC,       anchor_y_norm NUMERIC,
-    frame_w       INTEGER,       frame_h      INTEGER,
-    zone          TEXT,          ts           TIMESTAMPTZ
-);
-
--- Device health — one row per heartbeat interval
-CREATE TABLE <schema>.nodes (
-    id               BIGSERIAL PRIMARY KEY,
-    device_id        TEXT,        name             TEXT,
-    location         TEXT,        status           TEXT,
-    cameras_active   INTEGER,     cameras_error    INTEGER,
-    detections_total INTEGER,     buffer_pending   INTEGER,
-    uptime_seconds   NUMERIC,     ts               TIMESTAMPTZ
-);
+COUNT(DISTINCT track_id) FROM detections     -- counts people
+COUNT(*)                 FROM notifications  -- counts alerts, not people
 ```
-
-<details>
-<summary><strong>SQL analytics you can run immediately</strong></summary>
-
-```sql
--- Detections per zone per minute
-SELECT zone, date_trunc('minute', ts) AS minute, COUNT(*) AS count
-FROM detections WHERE class = 'person'
-GROUP BY zone, minute ORDER BY minute;
-
--- Dwell — track a person's journey across zones
-SELECT track_id, zone, MIN(ts) AS entered, MAX(ts) AS last_seen,
-       EXTRACT(EPOCH FROM MAX(ts) - MIN(ts)) AS dwell_seconds
-FROM detections WHERE class = 'person' AND track_id IS NOT NULL
-GROUP BY track_id, zone ORDER BY entered;
-
--- Alert frequency by rule and camera
-SELECT rule_name, camera_id, COUNT(*) AS alerts,
-       MAX(ts) AS last_alert
-FROM notifications
-GROUP BY rule_name, camera_id ORDER BY alerts DESC;
-
--- Object size distribution (estimate distance from camera)
-SELECT class, AVG(bbox_h) AS avg_height_px,
-       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY bbox_h) AS median_height_px
-FROM detections GROUP BY class;
-
--- Device health — last seen per node
-SELECT device_id, name, location, status, cameras_active,
-       buffer_pending, ts AS last_heartbeat
-FROM nodes WHERE ts = (SELECT MAX(ts) FROM nodes n2 WHERE n2.device_id = nodes.device_id);
-```
-
-</details>
 
 ---
 
 ## Debug Tool
 
-Three modes for on-device diagnostics. No pipeline running required.
+Three modes for on-device diagnostics. No running pipeline required.
 
 ```bash
-# View live stream — check resolution, FPS, connectivity
-python tools/debug.py --mode view --source 0
-python tools/debug.py --mode view --source "rtsp://admin:pass@192.168.1.100/stream1"
-
-# Draw zones interactively — click polygon points, press N to close,
-# S to print YAML output ready to paste into cameras.yaml
-python tools/debug.py --mode zones --source 0
-python tools/debug.py --mode zones --camera cam-01 --config /etc/visionengine
-
-# Live inference overlay — bounding boxes, confidence, zones, FPS
-python tools/debug.py --mode inference --camera cam-01 --config /etc/visionengine
+python tools/debug.py --mode view      --source 0                 # stream, resolution, FPS
+python tools/debug.py --mode zones     --source 0                 # draw polygons, print YAML
+python tools/debug.py --mode inference --camera cam-01            # live detection overlay
 ```
 
-| Key | Action |
-|-----|--------|
-| `Q` | Quit |
-| `N` | Close current zone polygon |
-| `U` | Undo last point |
-| `S` | Print zone YAML to terminal |
-| `Z` | Toggle existing zones overlay |
-| `D` | Toggle detection boxes (inference mode) |
+Keys, flags, and what each mode does and doesn't exercise: [Tools](docs/TOOLS.md#the-debug-tool).
 
 > Zone coordinates are always captured in native camera resolution — the pipeline handles all resizing internally.
-
----
-
-## Rules
-
-Rules are the pipeline's gate. A detection that matches no rule is discarded before it reaches the buffer.
-
-```yaml
-# rules.yaml
-rules:
-  # Filter-only — detection stored silently, no webhook
-  - name: track_persons_lobby
-    class: person
-    cameras: [cam-01]
-    zones: [lobby_entrance]
-    min_confidence: 0.75
-    notify: false
-    enabled: true
-
-  # Notification rule — detection stored + webhook fired
-  - name: person_restricted_area
-    class: person
-    cameras: []          # [] = all cameras
-    zones: [server_room]
-    min_confidence: 0.88
-    cooldown_seconds: 15
-    notify: true
-    severity: critical
-    notifications_table: "notifications"
-    message: "Person in {zone} on {camera} — confidence {confidence}"
-    enabled: true
-```
-
-**Rule evaluation:**
-
-```
-filter_and_tag() returns:
-  None        → no rule matched → detection discarded
-  []          → matched, notify: false → stored in detections, no webhook
-  [RuleMatch] → matched, notify: true  → stored in detections + notifications, webhook fired
-```
 
 ---
 
@@ -408,40 +310,38 @@ filter_and_tag() returns:
 VisionEngine-Edge/
 ├── main.py                     ← entry point
 ├── requirements.txt
+├── docs/                       ← architecture, configuration, data model, deployment, tools
 ├── scripts/
 │   ├── install.sh              ← interactive setup — one entry point for every device
 │   └── service.sh              ← install/start/stop/logs as a systemd service
 ├── config/                     ← deployment config (fill in, never commit secrets)
-│   ├── api.yaml
-│   ├── cameras.yaml
-│   ├── device.yaml
-│   ├── models.yaml
-│   ├── notifications.yaml
-│   ├── rules.yaml
-│   ├── collection.yaml
+│   ├── *.yaml                  ← the eight files listed above
 │   └── config_sample/          ← fully-documented reference files
 ├── core/
-│   ├── config/                 ← YAML parsers + validation + AppConfig
-│   ├── pipeline/               ← per-camera pipeline loop + rows
-│   ├── model/                  ← ModelRunner (predict/track) + ModelRegistry
+│   ├── config/                 ← strict YAML parsers + cross-file validation + AppConfig
+│   ├── pipeline/               ← per-camera loop, enrichment, row builders
+│   ├── model/
+│   │   ├── detector/           ← Ultralytics and Hailo backends + registry
+│   │   └── tracker/            ← BoT-SORT via boxmot, ReID backend selection
+│   ├── zone/                   ← point-in-polygon zone assignment
 │   ├── rules/                  ← RulesEngine + DetectionEvent + RuleMatch
 │   ├── buffer/                 ← SQLite offline buffer (aiosqlite)
 │   ├── ingest/                 ← IngestWorker — HTTP flush loop
 │   ├── notifier/               ← webhook delivery + payload builder
 │   ├── health/                 ← heartbeat rows + health file writer
-│   └── collection/             ← dataset frame sampler
+│   └── collector/              ← dataset frame sampler
 ├── tools/
 │   └── debug/                  ← view / zones / inference debug modes
-└── models/                     ← model weight files (.pt, .onnx, .hef)
+└── models/                     ← model weight files (.pt, .engine, .hef, .mlpackage)
 ```
 
 ---
 
 ## Deployment
 
-Setup is the [Quick Start](#quick-start) above (`scripts/install.sh`) on whatever device you're deploying to — Raspberry Pi, Jetson, a Hailo-equipped Pi, a Mac, or a generic PC, same one script either way.
+Standing up a device end to end — branch, schema, model exports, config, dashboard — is [**docs/DEPLOYMENT.md**](docs/DEPLOYMENT.md). It also documents the four failures that produce no error at the moment they happen.
 
-For running it as a proper background service instead of a manual terminal session, `scripts/service.sh` manages a `systemd` unit for you — no unit file to write or `.venv` path to get right by hand:
+To run as a background service instead of a manual terminal session, `scripts/service.sh` manages a `systemd` unit for you — no unit file to write or `.venv` path to get right by hand:
 
 ```bash
 sudo bash scripts/service.sh install    # create and enable the service (run once)
@@ -452,7 +352,7 @@ sudo bash scripts/service.sh restart    # restart after a config change
 sudo bash scripts/service.sh uninstall  # remove the service — config and data are kept
 ```
 
-The service runs as whichever user ran `install`, restarts automatically on failure, and starts on boot.
+The service runs as whichever user ran `install`, restarts automatically on failure, and starts on boot. Nothing is re-read at runtime — restart after any config change.
 
 ---
 
