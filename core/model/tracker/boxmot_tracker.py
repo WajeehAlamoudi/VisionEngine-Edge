@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import torch
 import yaml
-from boxmot.reid.backends.pytorch_backend import PyTorchBackend
 from boxmot.trackers.bbox.botsort import BotSort
 
 from core.config import ModelConfig
@@ -27,6 +26,44 @@ _DEFAULT_PARAMS = {
 # Small, widely-used person-ReID checkpoint — auto-downloaded by boxmot on
 # first use, same pattern as Ultralytics auto-downloading YOLO weights.
 _DEFAULT_REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
+
+# ReID keys consumed by this class rather than passed through to BotSort.
+# BotSort takes a constructed reid_model object, not weights/device/precision,
+# so these are popped out of the params dict before it is expanded.
+_REID_BACKENDS = ("pytorch", "tensorrt", "onnx", "openvino", "torchscript", "tflite")
+
+# The ReID network is a torch model, so it needs a torch device. The detector's
+# device from models.yaml is NOT usable: torch.device() raises on "hailo" and
+# "coreml", so a Hailo detector with with_reid: true used to crash at load.
+# They are genuinely separate devices — Hailo runs the detector, torch runs ReID.
+_TORCH_DEVICES = ("cpu", "cuda", "mps")
+
+
+def _import_reid_backend(name: str):
+    """
+    Import a boxmot ReID backend on demand.
+
+    Kept lazy so a device without TensorRT, OpenVINO, or tflite installed can
+    still run the pytorch backend - importing every backend at module level
+    would make the whole tracker unimportable on such a device.
+    """
+    if name == "pytorch":
+        from boxmot.reid.backends.pytorch_backend import PyTorchBackend
+        return PyTorchBackend
+    if name == "tensorrt":
+        from boxmot.reid.backends.tensorrt_backend import TensorRTBackend
+        return TensorRTBackend
+    if name == "onnx":
+        from boxmot.reid.backends.onnx_backend import ONNXBackend
+        return ONNXBackend
+    if name == "openvino":
+        from boxmot.reid.backends.openvino_backend import OpenVinoBackend
+        return OpenVinoBackend
+    if name == "torchscript":
+        from boxmot.reid.backends.torchscript_backend import TorchscriptBackend
+        return TorchscriptBackend
+    from boxmot.reid.backends.tflite_backend import TFLiteBackend
+    return TFLiteBackend
 
 
 class BoxMotTracker(Tracker):
@@ -67,23 +104,85 @@ class BoxMotTracker(Tracker):
         self._idx_to_name = {i: name for name, i in self._name_to_idx.items()}
 
         params = self._load_params()
+
+        # Popped, not passed through: BotSort wants a constructed reid_model,
+        # not the pieces it is built from.
         reid_weights = params.pop("reid_weights", _DEFAULT_REID_WEIGHTS)
+        reid_backend = params.pop("reid_backend", "pytorch")
+        reid_device  = params.pop("reid_device", "auto")
+        reid_half    = params.pop("reid_half", False)
 
         if params.get("with_reid"):
-            # Same device value already used to place the detector — reused
-            # here rather than adding a separate config field. On the Pi this
-            # resolves to cpu (ReID still works, just not accelerated); on a
-            # Jetson/GPU box it resolves to cuda, and the ReID network actually
-            # gets the GPU speedup instead of silently running on CPU.
-            device = torch.device(_resolve_device(self._cfg.device))
-            params["reid_model"] = PyTorchBackend(reid_weights, device, half=False)
-            log.info("tracker '%s': ReID model loaded on %s", self._cfg.id, device)
+            params["reid_model"] = self._build_reid(
+                reid_weights, reid_backend, reid_device, reid_half
+            )
 
         self._tracker = BotSort(**params)
         log.info(
             "tracker '%s' ready — boxmot BotSort (with_reid=%s, use_cmc=%s)",
             self._cfg.id, params.get("with_reid"), params.get("use_cmc"),
         )
+
+    def _reid_device(self, requested: str) -> torch.device:
+        """
+        Resolve the torch device the ReID network runs on.
+
+        "auto" follows the detector when the detector is on a torch device, and
+        falls back to cpu when it is not - a Hailo or CoreML detector still
+        needs its ReID on cpu or cuda.
+        """
+        if requested == "auto":
+            detector_device = _resolve_device(self._cfg.device)
+            if detector_device in _TORCH_DEVICES:
+                return torch.device(detector_device)
+            log.warning(
+                "tracker '%s': detector device '%s' is not a torch device - "
+                "running ReID on cpu. Set reid_device explicitly to override.",
+                self._cfg.id, detector_device,
+            )
+            return torch.device("cpu")
+
+        if requested not in _TORCH_DEVICES:
+            raise RuntimeError(
+                f"tracker '{self._cfg.id}': reid_device '{requested}' is not a "
+                f"torch device - expected auto, {', '.join(_TORCH_DEVICES)}"
+            )
+        return torch.device(requested)
+
+    def _build_reid(self, weights: str, backend: str, requested_device: str,
+                    half: bool):
+        """
+        Construct the ReID backend.
+
+        Backend modules are imported lazily so a device without TensorRT (or
+        OpenVINO, or tflite) can still run the pytorch backend - the same rule
+        the detector backends follow for their SDKs.
+        """
+        if backend not in _REID_BACKENDS:
+            raise RuntimeError(
+                f"tracker '{self._cfg.id}': unknown reid_backend '{backend}' - "
+                f"expected one of {', '.join(_REID_BACKENDS)}"
+            )
+
+        device = self._reid_device(requested_device)
+
+        # half only helps on a real GPU; on cpu/mps it gives no speedup and can
+        # be slower, so a stray reid_half: true is a logged no-op there rather
+        # than something counterproductive.
+        use_half = half and device.type == "cuda"
+        if half and not use_half:
+            log.info(
+                "tracker '%s': reid_half ignored - no benefit on device=%s",
+                self._cfg.id, device,
+            )
+
+        cls = _import_reid_backend(backend)
+        model = cls(weights, device, half=use_half)
+        log.info(
+            "tracker '%s': ReID ready — %s backend on %s (half=%s, weights=%s)",
+            self._cfg.id, backend, device, use_half, weights,
+        )
+        return model
 
     def _load_params(self) -> dict:
         path = Path(self._cfg.tracker)
