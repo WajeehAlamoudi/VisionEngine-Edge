@@ -12,39 +12,51 @@
 # class. This is NOT the same file as boxmot's own bundled botsort.yaml —
 # that one is a hyperparameter search-space definition for its internal
 # auto-tuning engine (ranges, not values) and cannot be loaded directly.
-# If this file is missing or unreadable, BoxMotTracker falls back to safe
-# defaults (with_reid: false, use_cmc: false) and logs a warning — nothing
-# crashes.
+#
+# WHAT MAY GO IN THIS FILE
+# Every key here is expanded into BotSort(**params), except the four reid_*
+# keys at the bottom, which this project consumes to build the ReID model.
+# So any BotSort constructor argument is valid. The full set:
+#
+#   with_reid  track_high_thresh  track_low_thresh  new_track_thresh
+#   track_buffer  match_thresh  proximity_thresh  appearance_thresh
+#   use_cmc  cmc_method  frame_rate  fuse_first_associate
+#   second_match_thresh  unconfirmed_match_thresh  unconfirmed_emb_scale
+#   removed_stracks_buffer
+#
+# CAUTION — keys that look valid but do nothing.
+# BotSort accepts **kwargs, so det_thresh, max_age, min_hits, iou_threshold,
+# asso_func and per_class are absorbed and echoed in the startup log while
+# BotSort never reads them; they belong to other boxmot trackers. A typo is
+# swallowed the same way. This file is not validated by the strict config
+# loader, so check the "BotSort: ..." startup log line to confirm a value
+# actually arrived.
 
 # Match objects by appearance (what they look like), not just position.
 # Turn this on to recover identity across occlusion or low camera frame
 # rate — the two biggest causes of a track_id changing when it shouldn't.
-#
-# The ReID model's device (cpu/cuda/auto) is NOT set here — it reuses the
-# same "device:" value already set on this model in models.yaml, so there
-# is only one place to configure hardware per model, not two.
 with_reid: true
-
-# Optional — ReID checkpoint to load when with_reid is true. Auto-downloaded
-# on first use if not already present locally. Leave unset to use the
-# built-in default (a small, general-purpose person-ReID model).
-# reid_weights: "osnet_x0_25_msmt17.pt"
 
 # Camera-motion compensation — corrects for the *camera itself* moving or
 # shaking between frames. Leave false for a fixed/static camera; only
 # turn on for a handheld or pan-tilt-zoom camera.
 use_cmc: false
 
-# Set this to match the camera's real, measured frames-per-second — not
-# the configured fps_target. The tracker uses this to judge how far an
-# object should plausibly move between frames. A stale/wrong value here
-# makes the tracker's motion predictions worse, not better.
+# Set this to the camera's real, MEASURED frames-per-second — not the
+# fps_target from cameras.yaml, which is only a ceiling. Read it from the
+# per-camera throughput line the pipeline logs every 10 seconds.
+#
+# It scales the track buffer and nothing else, so the two are read together:
+#   seconds a lost track is remembered = track_buffer / 30
+# A stale frame_rate silently changes that window. At frame_rate 4 while
+# actually running at 12 fps, a 4-second buffer becomes 12 seconds, and a
+# track abandoned long ago can be revived onto a different person.
 frame_rate: 5
 
-# How many frames a track is kept "alive" (rememberable) after it stops
-# being detected, before it's given up on and its ID is freed. Raise this
-# if objects are frequently lost behind obstacles for a few seconds.
-track_buffer: 30
+# See above — this divided by 30 is the memory window in seconds.
+# 120 = 4 seconds. The default of 30 = 1 second, which is usually too short
+# for anyone briefly walking behind an obstacle.
+track_buffer: 120
 
 # Minimum box overlap (IoU) required to accept a match between a new
 # detection and a track's predicted position. Lower = more lenient
@@ -59,4 +71,83 @@ track_high_thresh: 0.6
 
 # Confidence threshold for the secondary (low-confidence) matching pass —
 # catches partially-occluded or blurry detections the first pass missed.
+#
+# This pass only sees detections BELOW track_high_thresh, so it is starved
+# when models.yaml sets a high confidence_threshold: a model floor of 0.5
+# leaves only the 0.5–0.6 band instead of 0.1–0.6.
 track_low_thresh: 0.1
+
+# IoU gate applied before appearance matching is attempted. A pair whose
+# boxes overlap less than (1 - this) is rejected outright, so at a low frame
+# rate — where a walking person moves far between frames — ReID never gets
+# the chance to rescue the match. 0.7 allows overlap down to 30%.
+proximity_thresh: 0.7
+
+# Maximum embedding distance accepted as the same identity. Raising it makes
+# ReID more permissive and risks merging two similar-looking people.
+appearance_thresh: 0.25
+
+# Use appearance in the FIRST association pass, not only the second. Worth
+# enabling when large inter-frame motion makes IoU alone unreliable.
+fuse_first_associate: true
+
+# Camera-motion estimation algorithm. Read only when use_cmc: true, so it is
+# inert above — stated anyway so nothing in this file is left to a default.
+cmc_method: ecc
+
+# Matching threshold for the second association pass, the one that works on
+# low-confidence detections. Looser than match_thresh because those boxes are
+# already the weaker evidence.
+second_match_thresh: 0.5
+
+# Matching threshold for a track that is new and not yet confirmed. Its first
+# association is the most fragile, since there is no motion history to predict
+# from — loosening this can help a person keep the id they were first given.
+unconfirmed_match_thresh: 0.7
+
+# How much appearance is weighted for those unconfirmed tracks, relative to
+# motion. Higher means lean harder on ReID while the Kalman filter has nothing
+# to say yet.
+unconfirmed_emb_scale: 2.0
+
+# How many removed tracks are remembered, to avoid immediately reissuing an id
+# that was just retired.
+removed_stracks_buffer: 100
+
+
+# ── ReID model ───────────────────────────────────────────────────────────────
+# Read only when with_reid: true. These four are consumed by this project
+# rather than passed to BotSort, which expects a constructed model object.
+
+# pytorch  — the .pt checkpoint through torch. Works anywhere torch does.
+# tensorrt — a .engine built for THIS device. Far faster: OSNet is small
+#            enough that its cost is kernel launch overhead rather than
+#            arithmetic, so layer fusion helps enormously while half
+#            precision alone does not.
+#
+# Only these two are selectable. boxmot's other backends (onnx, openvino,
+# tflite) pip install their runtime on first load, which replaces a vendor
+# torch build on devices whose CUDA stack comes from the OS rather than pip.
+# Selecting one raises at startup instead.
+reid_backend: pytorch
+
+# A TORCH device, which is not necessarily the detector's device.
+#   auto → follow models.yaml when it names a torch device, else cpu
+#   cpu | cuda | mps
+# A Hailo or CoreML detector still needs its ReID on cpu or cuda: those are
+# not torch devices, and reusing them here used to raise at model load.
+reid_device: auto
+
+# FP16 for the ReID network. Applied only when reid_device resolves to cuda;
+# on cpu/mps it is a logged no-op. Has no effect on a .engine, whose
+# precision is fixed when the engine is built.
+reid_half: true
+
+# For reid_backend: pytorch  — a checkpoint name boxmot resolves against its
+#   own model directory, downloading on first use.
+# For reid_backend: tensorrt — the FULL PATH to a .engine built on this
+#   device. Export it with the batch dimension dynamic, since one crop is
+#   embedded per detection and a frame with three people arrives as a batch
+#   of three; a fixed batch-1 engine fails the moment a second person
+#   appears.
+reid_weights: "osnet_x0_25_msmt17.pt"
