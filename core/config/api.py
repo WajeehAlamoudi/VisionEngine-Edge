@@ -1,5 +1,14 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
+
+from .strict import Reader
+
+_FILE = "api.yaml"
+
+# Backend-issued keys are long random strings. The exact format is the
+# backend's business, but anything this short is a placeholder or a bad paste.
+_MIN_KEY_LENGTH = 20
 
 
 @dataclass
@@ -33,25 +42,58 @@ class ApiConfig:
 
 
 def parse(raw: dict) -> ApiConfig:
-    ingest = raw.get("ingest", {})
-    buf = raw.get("buffer", {})
-    request = raw.get("request", {})
+    """
+    Parse and validate api.yaml.
+
+    Every key is required — nothing is defaulted. Types, ranges, and formats
+    are checked here so a bad value stops the device at startup rather than
+    surfacing later as an auth failure or a request to a hostless URL.
+    """
+    r = Reader(_FILE, raw)
+
+    branch_id = r.uuid_string("branch_id")
+    key = r.string("key", min_len=_MIN_KEY_LENGTH)
+    url = r.url("url")
+
+    ingest_r = r.section("ingest")
+    batch_size = ingest_r.integer("batch_size", minimum=1)
+    flush_interval_seconds = ingest_r.integer("flush_interval_seconds", minimum=1)
+
+    buffer_r = r.section("buffer")
+    buffer_path = buffer_r.string("path")
+    max_size_mb = buffer_r.integer("max_size_mb", minimum=1)
+    retry_interval_seconds = buffer_r.integer("retry_interval_seconds", minimum=1)
+    # 0 is meaningful here: delete rows immediately after a successful push.
+    delete_after_hours = buffer_r.integer("delete_after_hours", minimum=0)
+
+    if buffer_path.startswith("/tmp"):
+        buffer_r.warn(
+            "path",
+            "buffer lives under /tmp - unsent rows are lost on reboot",
+        )
+
+    request_r = r.section("request")
+    timeout_seconds = request_r.integer("timeout_seconds", minimum=1)
+    max_consecutive_failures = request_r.integer("max_consecutive_failures", minimum=1)
+
+    r.raise_if_errors()
+
     return ApiConfig(
-        branch_id=raw["branch_id"],
-        key=raw["key"],
-        url=raw["url"].rstrip("/"),
+        branch_id=branch_id,
+        key=key,
+        url=url,
         ingest=IngestConfig(
-            batch_size=ingest.get("batch_size", 50),
-            flush_interval_seconds=ingest.get("flush_interval_seconds", 30),
+            batch_size=batch_size,
+            flush_interval_seconds=flush_interval_seconds,
         ),
         buffer=BufferConfig(
-            path=buf.get("path", "./data/buffer.db"),
-            max_size_mb=buf.get("max_size_mb", 200),
-            retry_interval_seconds=buf.get("retry_interval_seconds", 10),
-            delete_after_hours=buf.get("delete_after_hours", 24),
+            path=buffer_path,
+            max_size_mb=max_size_mb,
+            retry_interval_seconds=retry_interval_seconds,
+            delete_after_hours=delete_after_hours,
         ),
         request=RequestConfig(
-            timeout_seconds=request.get("timeout_seconds", 10),
-            max_consecutive_failures=request.get("max_consecutive_failures", 5),
+            timeout_seconds=timeout_seconds,
+            max_consecutive_failures=max_consecutive_failures,
         ),
     )

@@ -2,6 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .strict import ID_PATTERN, TABLE_NAME_PATTERN, Reader
+
+_FILE = "device.yaml"
+
+_DEVICE_KEYS = (
+    "id", "name", "location", "environment",
+    "max_cameras", "log_level", "heartbeat", "health_file",
+)
+_HEARTBEAT_KEYS = ("enabled", "interval_seconds", "table")
+_HEALTH_FILE_KEYS = ("enabled", "path", "interval_seconds")
+
+ENVIRONMENTS = ("production", "development")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+
 
 @dataclass
 class HeartbeatConfig:
@@ -22,8 +36,9 @@ class DeviceConfig:
     id: str
     name: str
     location: str
+    # A label only: reported in the startup log line, and nothing else reads it.
+    # It is not part of the heartbeat row, so it does not reach the dashboard.
     environment: str        # production | development
-    fps_target: int
     max_cameras: int
     log_level: str          # DEBUG | INFO | WARNING | ERROR
     heartbeat: HeartbeatConfig
@@ -31,25 +46,52 @@ class DeviceConfig:
 
 
 def parse(raw: dict) -> DeviceConfig:
-    hb = raw.get("heartbeat", {})
-    hf = raw.get("health_file", {})
+    """
+    Parse and validate device.yaml.
+
+    Every key is required, including those under a disabled heartbeat or
+    health file - one rule ("always present") is more predictable than
+    conditional requirements.
+    """
+    r = Reader(_FILE, raw)
+    r.reject_unknown(*_DEVICE_KEYS)
+
+    device_id = r.identifier(
+        "id", ID_PATTERN,
+        "letters, digits, hyphens, and underscores only (this becomes nodes.device_id)",
+    )
+    name = r.string("name")
+    location = r.string("location")
+    environment = r.enum("environment", ENVIRONMENTS)
+    max_cameras = r.integer("max_cameras", minimum=1)
+    log_level = r.enum("log_level", LOG_LEVELS)
+
+    hb = r.section("heartbeat")
+    hb.reject_unknown(*_HEARTBEAT_KEYS)
+    heartbeat = HeartbeatConfig(
+        enabled=hb.boolean("enabled"),
+        interval_seconds=hb.integer("interval_seconds", minimum=1),
+        table=hb.identifier("table", TABLE_NAME_PATTERN,
+                            "letters, digits, and underscores only (a table name)"),
+    )
+
+    hf = r.section("health_file")
+    hf.reject_unknown(*_HEALTH_FILE_KEYS)
+    health_file = HealthFileConfig(
+        enabled=hf.boolean("enabled"),
+        path=hf.string("path"),
+        interval_seconds=hf.integer("interval_seconds", minimum=1),
+    )
+
+    r.raise_if_errors()
 
     return DeviceConfig(
-        id=raw["id"],
-        name=raw.get("name", raw["id"]),
-        location=raw.get("location", ""),
-        environment=raw.get("environment", "production"),
-        fps_target=raw.get("fps_target", 5),
-        max_cameras=raw.get("max_cameras", 4),
-        log_level=raw.get("log_level", "INFO"),
-        heartbeat=HeartbeatConfig(
-            enabled=hb.get("enabled", True),
-            interval_seconds=hb.get("interval_seconds", 60),
-            table=hb.get("table", "nodes"),
-        ),
-        health_file=HealthFileConfig(
-            enabled=hf.get("enabled", True),
-            path=hf.get("path", "/tmp/visionengine-edge-health.json"),
-            interval_seconds=hf.get("interval_seconds", 30),
-        ),
+        id=device_id,
+        name=name,
+        location=location,
+        environment=environment,
+        max_cameras=max_cameras,
+        log_level=log_level,
+        heartbeat=heartbeat,
+        health_file=health_file,
     )

@@ -4,6 +4,7 @@ import logging
 import time
 
 from core.config import RuleConfig
+from core.config.strict import ALL
 from .types import DetectionEvent, RuleMatch
 
 log = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ class RulesEngine:
         for rule in self._rules:
             if rule.cameras and event.camera_id not in rule.cameras:
                 continue
-            if rule.class_name != event.class_name:
+            if rule.class_name != ALL and rule.class_name != event.class_name:
                 continue
             if rule.zones and event.zone not in rule.zones:
                 continue

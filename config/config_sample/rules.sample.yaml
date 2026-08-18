@@ -24,12 +24,12 @@ rules:
   #                         in the model used by the target cameras.
   #
   #   cameras               Which camera IDs this rule applies to.
-  #                         [] = all cameras (universal convention).
+  #                         "*" = all cameras (universal convention).
   #                         [cam-01, cam-03] = only those cameras.
   #                         Startup validation warns if a listed camera ID does not exist.
   #
   #   zones                 Zone names to watch.
-  #                         [] = all zones on the matched cameras.
+  #                         "*" = all zones on the matched cameras.
   #                         [zone_a, zone_b] = detection in ANY of them matches.
   #
   #   min_confidence        Additional confidence floor for this rule only.
@@ -73,7 +73,11 @@ rules:
     cameras: [cam-01]             # only applies to the entrance camera
     zones: [main_entrance]
     min_confidence: 0.75
+    cooldown_seconds: 0            # unused when notify: false
     notify: false                 # filter-only — stored silently
+    severity: info                 # unused when notify: false
+    notifications_table:           # null — filter-only, nothing stored
+    message: "filter-only rule, no notification is sent"
     enabled: true
 
   - name: track_persons_parking
@@ -81,7 +85,11 @@ rules:
     cameras: [cam-02]
     zones: [parking_zone_a, parking_entrance]
     min_confidence: 0.70
+    cooldown_seconds: 0            # unused when notify: false
     notify: false
+    severity: info                 # unused when notify: false
+    notifications_table:           # null — filter-only, nothing stored
+    message: "filter-only rule, no notification is sent"
     enabled: true
 
   - name: track_vehicles_parking
@@ -89,7 +97,11 @@ rules:
     cameras: [cam-02]
     zones: [parking_zone_a, parking_entrance]
     min_confidence: 0.70
+    cooldown_seconds: 0            # unused when notify: false
     notify: false
+    severity: info                 # unused when notify: false
+    notifications_table:           # null — filter-only, nothing stored
+    message: "filter-only rule, no notification is sent"
     enabled: true
 
 
@@ -99,7 +111,7 @@ rules:
 
   - name: person_restricted_area
     class: person
-    cameras: []                   # all cameras — restricted area rule applies everywhere
+    cameras: "*"                   # all cameras — restricted area rule applies everywhere
     zones: [server_room, back_office]
     min_confidence: 0.88
     cooldown_seconds: 15
@@ -111,8 +123,8 @@ rules:
 
   - name: truck_on_premises
     class: truck
-    cameras: []                   # all cameras
-    zones: []                     # any zone
+    cameras: "*"                   # all cameras
+    zones: "*"                     # any zone
     min_confidence: 0.70
     cooldown_seconds: 60
     notify: true
@@ -126,8 +138,8 @@ rules:
 
   - name: bicycle_anywhere
     class: bicycle
-    cameras: []
-    zones: []
+    cameras: "*"
+    zones: "*"
     min_confidence: 0.70
     cooldown_seconds: 30
     notify: true

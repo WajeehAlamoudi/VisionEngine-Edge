@@ -46,11 +46,17 @@ class Notifier:
         for match in matches:
             self._log(match)
 
-            if not self._webhooks:
+            # Each webhook declares which rules and severities it wants, so a
+            # match no webhook subscribes to costs nothing beyond the log line.
+            targets = [
+                w for w in self._webhooks
+                if w.accepts(match.rule.name, match.rule.severity)
+            ]
+            if not targets:
                 continue
 
             payload = _build_payload(match, self._device_id, self._branch_id)
-            for webhook in self._webhooks:
+            for webhook in targets:
                 task = asyncio.create_task(
                     self._send(webhook, payload),
                     name=f"webhook-{webhook.name}",

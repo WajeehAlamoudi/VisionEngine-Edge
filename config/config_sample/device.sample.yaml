@@ -17,30 +17,14 @@ device:
   #
   location: "Main Entrance - Building A"
 
-  # Runtime environment.
-  #   production  → INFO-level logs, strict error handling, no debug output
-  #   development → DEBUG-level logs, relaxed error handling, extra output
+  # Runtime environment. This is a LABEL only - it is printed in the startup
+  # log line and nothing else reads it. It does not change log level or error
+  # handling, and it is not part of the heartbeat row, so it does not reach
+  # the dashboard. Use log_level below to control logging.
   #
   environment: production   # production | development
 
 
-  # ── inference performance ───────────────────────────────────────────────────
-  # Controls how many frames per second each camera pipeline sends to the model.
-  # This is NOT the camera capture FPS — it is the inference FPS.
-  # The camera always captures at native FPS; frames are dropped between inferences.
-  #
-  # Rule of thumb by hardware:
-  #   Raspberry Pi 4 (CPU only)   → 1–2
-  #   Raspberry Pi 5 (CPU only)   → 2–3
-  #   Raspberry Pi + Hailo-8L     → 5–10
-  #   Jetson Nano                 → 5–8
-  #   Jetson Orin                 → 15–30
-  #   Mac Mini (M-series)         → 10–20
-  #
-  # Individual cameras can override this in cameras.yaml.
-  # Lower values use less CPU/GPU but miss fast-moving events.
-  #
-  fps_target: 5
 
   # Maximum number of camera streams this device can run simultaneously.
   # The pipeline will refuse to start more cameras than this limit.

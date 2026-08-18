@@ -34,12 +34,19 @@ models:
   #               Relative to the project root, or absolute.
   #               Convention: store all model files in ./models/
   #
-  #               Supported formats:
-  #                 .pt          PyTorch — works on all devices with torch
-  #                 .onnx        ONNX — faster on CPU, no torch needed
-  #                 .tflite      TensorFlow Lite — Raspberry Pi CPU optimised
-  #                 .mlpackage   CoreML — Apple Neural Engine (Mac Mini M-series)
-  #                 .hef         Hailo compiled — Hailo-8 / Hailo-8L hat only
+  #               Format determines which device can run it. This pairing is
+  #               enforced at startup:
+  #                 .pt          PyTorch      → auto | cpu | cuda | mps
+  #                 .onnx        ONNX         → auto | cpu | cuda | mps
+  #                 .engine      TensorRT     → cuda only
+  #                 .tflite      TF Lite      → cpu
+  #                 .mlpackage   CoreML       → coreml
+  #                 .hef         Hailo        → hailo
+  #
+  #               .engine excludes "auto" on purpose: auto resolves to CPU when
+  #               no GPU is present, and a TensorRT engine cannot load on CPU.
+  #               A .engine is also built for the exact GPU and TensorRT version
+  #               it was exported on — export it on the device that will run it.
   #
   #   device      Hardware accelerator to use for inference.
   #               auto     → detect best available at startup (recommended)
@@ -49,14 +56,22 @@ models:
   #               coreml   → Apple Neural Engine (Mac Mini M-series)
   #               mps      → Apple Metal (Mac Mini M-series, PyTorch)
   #
-  #               Important: the model file format must match the device.
-  #                 .hef requires device: hailo
-  #                 .mlpackage requires device: coreml
-  #                 .pt / .onnx work with: cpu, cuda, mps
+  #               A device that cannot run the file's format is a startup
+  #               error — see the format table above.
   #
-  #   classes     Full list of object classes this model can detect.
-  #               These are the POSSIBLE outputs of this model — not a filter.
-  #               Class names must match exactly what the model outputs.
+  #   classes     The classes this deployment expects from this model. Names
+  #               must match exactly what the model outputs, and cameras may
+  #               only reference classes listed here.
+  #
+  #               This is normally a narrowed set, not the model's full 80-class
+  #               COCO list — declare the classes you actually use. Treat it as
+  #               a contract: if someone deploys the wrong weights file, the
+  #               declared classes will not match and startup fails.
+  #
+  #               Required, non-empty, no duplicates. "*" is NOT accepted here:
+  #               this list is the source of truth that camera class filters are
+  #               validated against, and resolving "*" would mean loading the
+  #               model before the config could be checked.
   #
   #               For standard YOLOv8 / YOLO11 pretrained on COCO 80 classes:
   #                 person, bicycle, car, motorcycle, airplane, bus, train, truck,
@@ -68,8 +83,9 @@ models:
   #   confidence_threshold
   #               Discard detections below this score. Range 0.0 – 1.0.
   #               This is the model-level floor — rules in rules.yaml can set
-  #               a HIGHER threshold per rule but never lower than this value.
-  #               Individual cameras can also override this (see cameras.yaml).
+  #               a HIGHER threshold per rule via min_confidence.
+  #               Cameras cannot override this — use a rule scoped to that
+  #               camera instead.
   #
   #   iou_threshold
   #               Intersection over Union for Non-Maximum Suppression.
@@ -89,11 +105,20 @@ models:
   #               false → stateless predict — track_id is always null (default).
   #                        Cameras sharing this model_id share one model instance (RAM efficient).
   #
-  #   tracker     Tracker algorithm to use when use_tracker: true.
-  #               Built-ins shipped with ultralytics (no download needed):
-  #                 "botsort.yaml"   — production standard, handles occlusion well
-  #                 "bytetrack.yaml" — lighter, weaker on occlusion
-  #               Different models can use different algorithms independently.
+  #   tracker     PATH to the tracker parameters file, relative to the project
+  #               root — e.g. "config/botsort_tracker.yaml". This is a file
+  #               path, NOT an algorithm name: its contents are passed straight
+  #               into the BoT-SORT tracker (with_reid, frame_rate, thresholds).
+  #               Copy config/config_sample/botsort_tracker.sample.yaml and tune
+  #               it per device.
+  #
+  #               Only BoT-SORT is implemented — see core/model/tracker/registry.py.
+  #               There is no way to select ByteTrack; naming a different file
+  #               changes the parameters, never the algorithm.
+  #
+  #               The file must exist when use_tracker: true. A missing file
+  #               used to fall back silently to ReID-disabled defaults, which
+  #               produced tracking that ran but re-assigned IDs constantly.
   #
   #   half        FP16 inference — true = run the model at half precision.
   #               Only takes effect when device resolves to cuda (a real GPU);
@@ -125,7 +150,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "botsort.yaml"
+    tracker: "config/botsort_tracker.yaml"
     half: false
 
 
@@ -144,7 +169,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "botsort.yaml"
+    tracker: "config/botsort_tracker.yaml"
     half: false
 
 
@@ -166,7 +191,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "botsort.yaml"
+    tracker: "config/botsort_tracker.yaml"
     half: false
 
 
@@ -191,7 +216,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "botsort.yaml"
+    tracker: "config/botsort_tracker.yaml"
     half: false
 
 
@@ -216,5 +241,5 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "botsort.yaml"
+    tracker: "config/botsort_tracker.yaml"
     half: false

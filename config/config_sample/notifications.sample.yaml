@@ -39,51 +39,77 @@ notifications:
   # Always fast — no network call. Use as a baseline even if webhooks are enabled.
   # Visible via: journalctl -u visionengine-edge -f
   #
+  # The log channel is never filtered: it is the full audit trail of every rule
+  # that fired. Per-rule routing applies to webhooks only.
+  #
   log:
     enabled: true
 
 
   # ── webhook channels ────────────────────────────────────────────────────────
-  # Any number of webhooks can be defined.
-  # Each fires independently — one failure does not block the others.
+  # Any number of webhooks can be defined, including none — an empty list is a
+  # valid configuration that delivers alerts to the log only.
+  # Each fires independently — one failure does not block the others, and no
+  # webhook failure ever blocks the pipeline or the ingest path.
   #
   # Fields:
-  #   name      Label used in logs to identify which webhook fired or failed.
-  #   url       Full HTTP/HTTPS URL to POST the alert payload to.
-  #             Must accept: POST, Content-Type: application/json
-  #   enabled   true/false — disable without deleting.
-  #   timeout_seconds
-  #             Seconds to wait for a response before treating as failed.
-  #             Failed webhooks are logged but do not block the pipeline.
-  #             Detection data is still ingested regardless of webhook outcome.
+  #   name       Label used in logs to identify which webhook fired or failed.
+  #              Letters, digits, hyphens, underscores. Must be unique.
   #
+  #   url        Full HTTP/HTTPS URL to POST the alert payload to.
+  #              Required and validated even when enabled: false, so enabling a
+  #              webhook later cannot silently fail against a placeholder.
+  #              If you have no URL yet, comment the whole entry out.
+  #
+  #   enabled    true/false — disable without deleting.
+  #
+  #   timeout_seconds
+  #              Seconds to wait for a response before treating as failed.
+  #              Failed webhooks are logged and dropped — never retried. The
+  #              notifications TABLE is populated separately through the durable
+  #              ingest path, so a webhook outage loses live alerts, not rows.
+  #
+  #   rules      Which rules this webhook fires for.
+  #                "*"                  → every rule
+  #                [rule_a, rule_b]     → only these rules, by name from rules.yaml
+  #              An empty list [] is rejected — write "*" if you mean all.
+  #              A name that does not exist in rules.yaml is a startup error.
+  #
+  #   severities Which severities this webhook fires for.
+  #                "*"                  → every severity
+  #                [critical, warning]  → only these
+  #              An empty list [] is rejected — write "*" if you mean all.
+  #
+  #   rules and severities are AND-ed: a match must satisfy both filters.
+  #   This is how you route by importance — a pager webhook takes only
+  #   critical, while the dashboard webhook takes everything.
+
+
   webhooks:
 
-    # Slack incoming webhook
-    # Setup: Slack workspace → Apps → Incoming Webhooks → Add
-    # The URL looks like: https://hooks.slack.com/services/T.../B.../...
-    - name: slack
-      url: YOUR_SLACK_WEBHOOK_URL
-      enabled: false
-      timeout_seconds: 5
-
-    # Microsoft Teams incoming webhook
-    - name: teams
-      url: YOUR_TEAMS_WEBHOOK_URL
-      enabled: false
-      timeout_seconds: 5
-
-    # VisionEngine backend — receives notifications and broadcasts to the frontend via WebSocket.
-    # Set url to: {api.url}/notifications/webhook  (same base as your ingest URL)
-    # The edge authenticates with the X-API-Key from api.yaml — no extra config needed.
+    # VisionEngine backend — receives notifications and broadcasts them to the
+    # frontend over WebSocket. Set url to {api.url}/notifications/webhook
+    # (the same base as your ingest URL). The edge authenticates with the
+    # X-API-Key from api.yaml — no extra config needed.
     - name: visionengine
-      url: YOUR_API_URL/api/v1/notifications/webhook
+      url: "https://your-backend.example.com/api/v1/notifications/webhook"
       enabled: false
       timeout_seconds: 5
+      rules: "*"
+      severities: "*"
 
-    # Custom endpoint — any server that accepts POST + JSON
-    # Useful for integrating with your own systems or third-party platforms
-    - name: custom
-      url: YOUR_CUSTOM_WEBHOOK_URL
-      enabled: false
-      timeout_seconds: 5
+    # Pager / on-call — critical alerts only, regardless of which rule fired.
+    # - name: pager
+    #   url: "https://hooks.example.com/services/XXX/YYY/ZZZ"
+    #   enabled: false
+    #   timeout_seconds: 5
+    #   rules: "*"
+    #   severities: [critical]
+
+    # A single-purpose integration — one rule, any severity.
+    # - name: restricted_area_alerts
+    #   url: "https://hooks.example.com/services/AAA/BBB/CCC"
+    #   enabled: false
+    #   timeout_seconds: 5
+    #   rules: [person_restricted_area]
+    #   severities: "*"
