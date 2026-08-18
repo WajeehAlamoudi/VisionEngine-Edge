@@ -19,10 +19,11 @@ from .rows import _utcnow, detection_row, notification_row
 
 log = logging.getLogger(__name__)
 
-# How often each camera logs its measured throughput, in seconds. Frequent
-# enough to watch a device settle after start, rare enough to leave the log
-# readable with several cameras running.
-_FPS_LOG_INTERVAL = 30.0
+# How often each camera logs its measured throughput, in seconds. Short enough
+# to watch a device settle after start and to catch a camera degrading while it
+# happens. Each camera reports independently, so this is one line per camera
+# per interval.
+_FPS_LOG_INTERVAL = 10.0
 
 
 class CameraPipeline:
