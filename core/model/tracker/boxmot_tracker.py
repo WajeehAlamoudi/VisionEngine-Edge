@@ -30,7 +30,18 @@ _DEFAULT_REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
 # ReID keys consumed by this class rather than passed through to BotSort.
 # BotSort takes a constructed reid_model object, not weights/device/precision,
 # so these are popped out of the params dict before it is expanded.
-_REID_BACKENDS = ("pytorch", "tensorrt", "onnx", "openvino", "torchscript", "tflite")
+#
+# boxmot ships six ReID backends, but only these two are safe to select here.
+# Each of the others declares a pip requirement that boxmot auto-installs when
+# unsatisfied - onnxruntime==1.24.3, openvino>=2025.2.0, ai-edge-litert - and
+# that installer is destructive on a device whose CUDA stack comes from the OS
+# rather than pip: it will pull a generic torch wheel and leave the GPU
+# unusable. pytorch needs nothing extra, and the tensorrt path disables the
+# installer explicitly because TensorRT is a system library here.
+_REID_BACKENDS = ("pytorch", "tensorrt")
+
+# Named only to give a useful error rather than "unknown backend".
+_REID_BACKENDS_REQUIRING_INSTALL = ("onnx", "openvino", "tflite", "torchscript")
 
 # The ReID network is a torch model, so it needs a torch device. The detector's
 # device from models.yaml is NOT usable: torch.device() raises on "hailo" and
@@ -39,31 +50,39 @@ _REID_BACKENDS = ("pytorch", "tensorrt", "onnx", "openvino", "torchscript", "tfl
 _TORCH_DEVICES = ("cpu", "cuda", "mps")
 
 
+def _skip_dependency_install(*_args, **_kwargs) -> tuple:
+    """Stand-in for boxmot's ReID dependency auto-installer. Installs nothing."""
+    return ()
+
+
 def _import_reid_backend(name: str):
     """
     Import a boxmot ReID backend on demand.
 
-    Kept lazy so a device without TensorRT, OpenVINO, or tflite installed can
-    still run the pytorch backend - importing every backend at module level
-    would make the whole tracker unimportable on such a device.
+    Kept lazy so a device without TensorRT installed can still run the pytorch
+    backend - a module-level import would make the whole tracker unimportable
+    there.
     """
     if name == "pytorch":
         from boxmot.reid.backends.pytorch_backend import PyTorchBackend
         return PyTorchBackend
     if name == "tensorrt":
-        from boxmot.reid.backends.tensorrt_backend import TensorRTBackend
-        return TensorRTBackend
-    if name == "onnx":
-        from boxmot.reid.backends.onnx_backend import ONNXBackend
-        return ONNXBackend
-    if name == "openvino":
-        from boxmot.reid.backends.openvino_backend import OpenVinoBackend
-        return OpenVinoBackend
-    if name == "torchscript":
-        from boxmot.reid.backends.torchscript_backend import TorchscriptBackend
-        return TorchscriptBackend
-    from boxmot.reid.backends.tflite_backend import TFLiteBackend
-    return TFLiteBackend
+        from boxmot.reid.backends import tensorrt_backend
+
+        # boxmot's TensorRT backend calls an auto-installer on every load_model,
+        # looking for a pip package named "nvidia-tensorrt". On platforms where
+        # TensorRT ships with the OS - Jetson via JetPack - that package does
+        # not exist and cannot be built, and the attempted install replaces the
+        # vendor torch build with a generic wheel whose bundled CUDA runtime the
+        # driver cannot use. That leaves the device with CUDA unavailable.
+        #
+        # TensorRT is a system library here, exactly as it is for the detector
+        # backends, so the check is disabled and the import is trusted. If
+        # tensorrt is genuinely missing, the ImportError inside load_model is
+        # the correct failure - a clear message rather than a broken install.
+        tensorrt_backend.ensure_reid_backend_requirements = _skip_dependency_install
+        return tensorrt_backend.TensorRTBackend
+    raise RuntimeError(f"unsupported reid_backend '{name}'")
 
 
 class BoxMotTracker(Tracker):
@@ -158,6 +177,13 @@ class BoxMotTracker(Tracker):
         OpenVINO, or tflite) can still run the pytorch backend - the same rule
         the detector backends follow for their SDKs.
         """
+        if backend in _REID_BACKENDS_REQUIRING_INSTALL:
+            raise RuntimeError(
+                f"tracker '{self._cfg.id}': reid_backend '{backend}' is not "
+                f"supported - boxmot would pip install its runtime on first "
+                f"load, which replaces a vendor torch build on devices whose "
+                f"CUDA stack comes from the OS. Use one of {', '.join(_REID_BACKENDS)}."
+            )
         if backend not in _REID_BACKENDS:
             raise RuntimeError(
                 f"tracker '{self._cfg.id}': unknown reid_backend '{backend}' - "
