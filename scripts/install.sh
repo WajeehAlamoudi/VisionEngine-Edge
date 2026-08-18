@@ -252,7 +252,7 @@ mkdir -p "$SCRIPT_DIR/models"
 # finishes, which is what keeps this installer identical for any deployment.
 mkdir -p "$SCRIPT_DIR/config"
 info "Copying config templates (skipping any that already exist)..."
-for f in api notifications rules collection device models cameras; do
+for f in api notifications rules collection device models cameras botsort_tracker; do
     dest="$SCRIPT_DIR/config/$f.yaml"
     src="$SCRIPT_DIR/config/config_sample/$f.sample.yaml"
     if [ -f "$dest" ]; then
