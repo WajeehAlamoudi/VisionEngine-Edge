@@ -19,6 +19,11 @@ from .rows import _utcnow, detection_row, notification_row
 
 log = logging.getLogger(__name__)
 
+# How often each camera logs its measured throughput, in seconds. Frequent
+# enough to watch a device settle after start, rare enough to leave the log
+# readable with several cameras running.
+_FPS_LOG_INTERVAL = 30.0
+
 
 class CameraPipeline:
     """
@@ -62,6 +67,13 @@ class CameraPipeline:
         self.detections_total = 0
         self.frames_processed = 0
         self.last_error: str | None = None
+
+        # throughput reporting — measured over the last interval, not since
+        # start, so the figure reflects current load rather than being dragged
+        # down by model warmup
+        self._last_report_at = 0.0
+        self._frames_at_report = 0
+        self._detections_at_report = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -109,6 +121,7 @@ class CameraPipeline:
 
         log.info("camera '%s': stream ready  %dx%d", self._cam.id, frame_w, frame_h)
         last_inference = 0.0
+        self._last_report_at = time.time()
 
         try:
             while not self._stop.is_set():
@@ -144,6 +157,7 @@ class CameraPipeline:
                     [(r.class_name, round(r.confidence, 2)) for r in results] if results else "none",
                 )
                 await self._process(results, cap_ts, frame_w, frame_h)
+                self._report_throughput(now)
 
                 if self._collector:
                     await self._collector.on_frame(self._cam.id, frame, results, cap_ts)
@@ -200,6 +214,33 @@ class CameraPipeline:
         if self._rows_since_trigger >= self._batch_size:
             self._ingest.trigger()
             self._rows_since_trigger = 0
+
+    def _report_throughput(self, now: float) -> None:
+        """
+        Log measured inference rate every _FPS_LOG_INTERVAL seconds.
+
+        Rate is computed from the frames processed since the previous report,
+        so it reflects current load. A cumulative average would stay depressed
+        by model warmup long after the device had settled.
+        """
+        elapsed = now - self._last_report_at
+        if elapsed < _FPS_LOG_INTERVAL:
+            return
+
+        frames = self.frames_processed - self._frames_at_report
+        detections = self.detections_total - self._detections_at_report
+        fps = frames / elapsed
+
+        # fps_target is the ceiling this camera is throttled to; falling well
+        # short of it means the device is saturated, not idle.
+        log.info(
+            "camera '%s': %.1f fps (target %d)  |  %d frames, %d detections in %.0fs",
+            self._cam.id, fps, self._cam.fps_target, frames, detections, elapsed,
+        )
+
+        self._last_report_at = now
+        self._frames_at_report = self.frames_processed
+        self._detections_at_report = self.detections_total
 
     def _route_table(self, class_name: str) -> str | None:
         if self._raw_table:
