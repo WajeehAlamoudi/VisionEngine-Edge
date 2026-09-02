@@ -49,20 +49,20 @@ class CameraPipeline:
             batch_size: int,
             collector=None,
     ) -> None:
-        self._cam      = cam
-        self._runner   = runner
-        self._buffer   = buffer
-        self._rules    = rules
+        self._cam = cam
+        self._runner = runner
+        self._buffer = buffer
+        self._rules = rules
         self._notifier = notifier
-        self._ingest   = ingest
+        self._ingest = ingest
         self._device_id = device_id
         self._batch_size = batch_size
-        self._collector  = collector
+        self._collector = collector
         self._stop = asyncio.Event()
         self._rows_since_trigger = 0
 
-        self._raw_table   = cam.raw_table
-        self._routing     = cam.routing
+        self._raw_table = cam.raw_table
+        self._routing = cam.routing
 
         # health stats — read by HealthReporter
         self.detections_total = 0
@@ -176,7 +176,7 @@ class CameraPipeline:
             frame_w: int,
             frame_h: int,
     ) -> None:
-        detection_rows:    list[dict] = []
+        detection_rows: list[dict] = []
         notification_rows: list[dict] = []
 
         for inf in results:
@@ -186,7 +186,7 @@ class CameraPipeline:
             # 2. Rules — filter irrelevant detections, tag relevant ones
             matches = self._rules.filter_and_tag(event)
             if matches is None:
-                continue    # no rule matched → discard
+                continue  # no rule matched → discard
 
             # 3. Detection row
             raw_table = self._route_table(event.class_name)
@@ -200,7 +200,7 @@ class CameraPipeline:
                     if match.rule.notifications_table:
                         notification_rows.append({
                             "table": match.rule.notifications_table,
-                            "row":   notification_row(match),
+                            "row": notification_row(match),
                         })
 
             self.detections_total += 1
