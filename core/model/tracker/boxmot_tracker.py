@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +10,7 @@ from boxmot.trackers.bbox.botsort import BotSort
 
 from core.config import ModelConfig
 from ..device import _resolve_device
+from ..stable_id import StableIdMap
 from ..types import InferenceResult
 from .base import Tracker
 
@@ -44,9 +44,10 @@ _REID_BACKENDS = ("pytorch", "tensorrt")
 _REID_BACKENDS_REQUIRING_INSTALL = ("onnx", "openvino", "tflite", "torchscript")
 
 # The ReID network is a torch model, so it needs a torch device. The detector's
-# device from models.yaml is NOT usable: torch.device() raises on "hailo" and
-# "coreml", so a Hailo detector with with_reid: true used to crash at load.
-# They are genuinely separate devices — Hailo runs the detector, torch runs ReID.
+# device from models.yaml is NOT usable: torch.device() raises on values like
+# "coreml" and "deepstream", so a CoreML detector with with_reid: true used to
+# crash at load. They are genuinely separate devices - one runs the detector,
+# torch runs ReID.
 _TORCH_DEVICES = ("cpu", "cuda", "mps")
 
 
@@ -115,8 +116,10 @@ class BoxMotTracker(Tracker):
         # this tracker instance regardless of the detector's internal indices
         self._name_to_idx: dict[str, int] = {}
         self._idx_to_name: dict[int, str] = {}
-        # boxmot's raw integer track id → our stable UUID, for this tracker's lifetime
-        self._id_map: dict[int, str] = {}
+        # boxmot's raw integer track id → our stable UUID, for this tracker's
+        # lifetime. Shared with the tracking detector backends so every
+        # track_id written to the detections table has the same shape.
+        self._ids = StableIdMap()
 
     def load(self) -> None:
         self._name_to_idx = {name: i for i, name in enumerate(self._cfg.classes)}
@@ -128,8 +131,8 @@ class BoxMotTracker(Tracker):
         # not the pieces it is built from.
         reid_weights = params.pop("reid_weights", _DEFAULT_REID_WEIGHTS)
         reid_backend = params.pop("reid_backend", "pytorch")
-        reid_device  = params.pop("reid_device", "auto")
-        reid_half    = params.pop("reid_half", False)
+        reid_device = params.pop("reid_device", "auto")
+        reid_half = params.pop("reid_half", False)
 
         if params.get("with_reid"):
             params["reid_model"] = self._build_reid(
@@ -147,8 +150,8 @@ class BoxMotTracker(Tracker):
         Resolve the torch device the ReID network runs on.
 
         "auto" follows the detector when the detector is on a torch device, and
-        falls back to cpu when it is not - a Hailo or CoreML detector still
-        needs its ReID on cpu or cuda.
+        falls back to cpu when it is not - a CoreML detector still needs its
+        ReID on cpu or cuda.
         """
         if requested == "auto":
             detector_device = _resolve_device(self._cfg.device)
@@ -241,11 +244,6 @@ class BoxMotTracker(Tracker):
                 class_name=self._idx_to_name.get(int(cls_idx), "unknown"),
                 confidence=float(conf),
                 bbox=xyxy.tolist(),
-                track_id=self._stable_id(int(track_id)),
+                track_id=self._ids.get(int(track_id)),
             ))
         return out
-
-    def _stable_id(self, raw_id: int) -> str:
-        if raw_id not in self._id_map:
-            self._id_map[raw_id] = str(uuid.uuid4())
-        return self._id_map[raw_id]

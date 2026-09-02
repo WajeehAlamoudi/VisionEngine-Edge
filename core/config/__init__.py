@@ -145,12 +145,32 @@ def _validate(cfg: AppConfig) -> None:
                 f"(an enabled camera uses this model)"
             )
 
+        # Required only when tracking is on, for every device including
+        # deepstream - which builds no nvtracker at all when use_tracker is
+        # false, and so never reads this file.
         if model.use_tracker and not Path(model.tracker).is_file():
-            errors.append(
-                f"models[{model.id}]: use_tracker is true but the tracker file "
-                f"'{model.tracker}' does not exist - tracking would silently "
-                f"fall back to defaults with ReID disabled"
-            )
+            if model.device == "deepstream":
+                errors.append(
+                    f"models[{model.id}]: tracker file '{model.tracker}' does not "
+                    f"exist - nvtracker reads it to decide which algorithm to run, "
+                    f"and has no default. Copy one of "
+                    f"/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/"
+                    f"config_tracker_*.yml"
+                )
+            else:
+                errors.append(
+                    f"models[{model.id}]: use_tracker is true but the tracker file "
+                    f"'{model.tracker}' does not exist - tracking would silently "
+                    f"fall back to defaults with ReID disabled"
+                )
+
+        if model.device == "deepstream" and model.ds_infer_config:
+            if not Path(model.ds_infer_config).is_file():
+                errors.append(
+                    f"models[{model.id}]: ds_infer_config '{model.ds_infer_config}' "
+                    f"does not exist - nvinfer cannot start without it "
+                    f"(an enabled camera uses this model)"
+                )
 
     # collect active classes and zone names from enabled cameras
     active_classes: set[str] = set()

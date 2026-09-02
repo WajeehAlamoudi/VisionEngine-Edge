@@ -11,13 +11,19 @@ _FILE = "models.yaml"
 _MODEL_KEYS = (
     "id", "name", "version", "path", "device", "classes",
     "confidence_threshold", "iou_threshold", "input_size",
-    "use_tracker", "tracker", "half",
+    "use_tracker", "tracker", "half", "ds_infer_config",
 )
 
 # Must stay in sync with _DEVICE_BACKENDS in core/model/detector/registry.py.
 # Duplicated rather than imported because that module pulls in ultralytics and
 # torch at import time, and config validation must stay free of heavy deps.
-DEVICES = ("auto", "cpu", "cuda", "mps", "coreml", "hailo")
+DEVICES = ("auto", "cpu", "cuda", "mps", "coreml", "deepstream")
+
+# Devices whose backend assigns track_id inside the detector rather than
+# through the tracker/ layer. Kept here so config validation can reason about
+# tracking without importing the backends. Must stay in sync with the
+# tracks_internally flags in core/model/detector/.
+_INTERNAL_TRACKING_DEVICES = ("deepstream",)
 
 # Which devices each weight format can actually run on. The sample has always
 # documented this; nothing enforced it until now.
@@ -27,9 +33,8 @@ DEVICES = ("auto", "cpu", "cuda", "mps", "coreml", "hailo")
 # into an obscure runtime failure instead of a clear config error.
 _FORMAT_DEVICES: dict[str, tuple[str, ...]] = {
     ".pt":        ("auto", "cpu", "cuda", "mps"),
-    ".onnx":      ("auto", "cpu", "cuda", "mps"),
-    ".engine":    ("cuda",),
-    ".hef":       ("hailo",),
+    ".onnx":      ("auto", "cpu", "cuda", "mps", "deepstream"),
+    ".engine":    ("cuda", "deepstream"),
     ".mlpackage": ("coreml",),
     ".tflite":    ("cpu",),
 }
@@ -44,15 +49,20 @@ class ModelConfig:
     name: str
     version: str
     path: str
-    device: str             # auto | cpu | cuda | mps | coreml | hailo
+    device: str             # auto | cpu | cuda | mps | coreml | deepstream
     classes: list[str]      # what this deployment expects the model to detect
     confidence_threshold: float
     iou_threshold: float
     input_size: list[int]   # [width, height]
-    use_tracker: bool        # true = BoT-SORT tracker ON → track_id populated per object
-    tracker: str             # path to the tracker params file, e.g. config/botsort_tracker.yaml
+    use_tracker: bool        # true = tracking ON → track_id populated per object
+    tracker: str             # path to the tracker params file — a BoT-SORT yaml for
+                              # every device except deepstream, where it is the
+                              # nvtracker config that also chooses the algorithm
     half: bool               # FP16 inference — only applied when device resolves to cuda;
                               # ignored on cpu/mps, where it gives no benefit (see device.py)
+    ds_infer_config: str | None = None
+                             # nvinfer config file. Required for device: deepstream,
+                             # meaningless for every other device.
 
 
 def _check_format(r: Reader, path_value: str, device: str) -> None:
@@ -104,7 +114,27 @@ def _parse_one(r: Reader) -> ModelConfig:
     half = r.boolean("half")
     half_ok = r.error_count == before_half
 
+    # Optional rather than required-with-null: it configures nvinfer, so it is
+    # meaningless on every device except deepstream, and demanding an explicit
+    # null in each Pi/Mac/CPU model entry would be noise.
+    ds_infer_config = r.optional_string("ds_infer_config")
+
     _check_format(r, path_value, device)
+
+    if device == "deepstream" and not ds_infer_config:
+        r.error(
+            r.path_of("ds_infer_config"),
+            "required for device 'deepstream' - nvinfer is configured by this "
+            "file (engine, network shape, class count, clustering), and there "
+            "is no default. Copy config/config_sample/deepstream_infer.sample.txt",
+        )
+    elif device != "deepstream" and ds_infer_config:
+        r.warn(
+            "ds_infer_config",
+            f"ignored on device '{device}' - it only configures nvinfer, "
+            f"which only device 'deepstream' runs",
+        )
+
 
     # Warnings are only meaningful when the value they describe actually
     # parsed - a failed read returns a placeholder, and warning about that
@@ -134,6 +164,7 @@ def _parse_one(r: Reader) -> ModelConfig:
         use_tracker=use_tracker,
         tracker=tracker,
         half=half,
+        ds_infer_config=ds_infer_config,
     )
 
 

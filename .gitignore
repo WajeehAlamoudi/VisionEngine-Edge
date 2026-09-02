@@ -40,7 +40,6 @@ config/botsort_tracker.yaml
 *.onnx
 *.tflite
 *.engine
-*.hef
 
 # Environment & secrets
 .env

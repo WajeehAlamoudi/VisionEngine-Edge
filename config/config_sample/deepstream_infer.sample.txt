@@ -1,0 +1,132 @@
+# ── nvinfer configuration — NVIDIA PeopleNet ──────────────────────────────────
+#
+# Read by the nvinfer element inside DeepStreamDetector. This file, not
+# models.yaml, is what tells DeepStream how to run the network: its input
+# shape, how many classes it has, and how raw output becomes boxes.
+#
+# Copy to config/deepstream_infer.txt and point models.yaml at it with:
+#   ds_infer_config: "config/deepstream_infer.txt"
+#
+# ── swapping models ───────────────────────────────────────────────────────────
+# Any NVIDIA TAO model on the DetectNet_v2 architecture works with no code
+# change and no custom parser:
+#
+#   PeopleNet      person, bag, face                960x544   3 classes
+#   TrafficCamNet  car, bicycle, person, roadsign   960x544   4 classes
+#   DashCamNet     car, bicycle, person, roadsign   960x544   4 classes
+#   FaceDetect     face                             736x416   1 class
+#
+# Swapping touches two files, not one. The engine is named in models.yaml, not
+# here — `path` is set on nvinfer at runtime and overrides model-engine-file
+# below, so models.yaml stays the single source of truth for which weights run.
+#
+#   models.yaml    path             the new .engine
+#                  classes          the new class list
+#                  input_size       the new input dimensions
+#
+#   this file      infer-dims       channels;height;width  (note: H before W)
+#                  num-detected-classes
+#                  labelfile-path   a label file with the new names, in order
+#                  [class-attrs-N]  one block per class id
+#
+# Config validation catches a mismatch between the two at startup rather than
+# letting it run and detect nothing.
+#
+# Models with a different output head — PeopleNet Transformer (DINO),
+# PeopleSegNet (instance masks) — are NOT covered by the built-in parser and
+# need parse-bbox-func-name plus a compiled custom-lib-path.
+
+[property]
+gpu-id=0
+
+# Preprocessing. PeopleNet takes RGB scaled to 0..1 with no mean subtraction:
+# net-scale-factor is 1/255, and model-color-format=0 is RGB.
+net-scale-factor=0.0039215697906911373
+model-color-format=0
+
+# The engine. NOTE: DeepStreamDetector overrides this at runtime with the
+# `path` from models.yaml, so that models.yaml stays the single source of
+# truth for which weights run and the two files cannot drift apart. It is left
+# here so this file also works standalone with deepstream-app.
+model-engine-file=../models/peoplenet_fp16.engine
+
+# One class name per line, in the MODEL's own order. Path is relative to this
+# file. Required, and models.yaml `classes` cannot replace it.
+#
+# The two lists mean different things. This file is what the model outputs, in
+# the order class_id indexes into. models.yaml `classes` is a filter naming the
+# classes you want to keep — any subset, any order. A model with ten classes
+# narrowed to two would give ids 0 and 1 to those names, so a detection of
+# class 5 would be labelled wrongly or not at all.
+#
+# install.sh writes config/peoplenet_labels.txt (person / bag / face). Replace
+# its contents when swapping to another model.
+labelfile-path=peoplenet_labels.txt
+
+# [width;height;channels] — must match what the engine was built for.
+infer-dims=3;544;960
+
+# The names of the network's output tensors, separated by semicolons. These are
+# DetectNet_v2's, and they are what nvinfer's built-in parser looks for.
+#
+# VERIFY THEM against your engine before first run — TAO has changed them
+# between PeopleNet releases, and a wrong name means nvinfer finds no outputs
+# and reports zero detections with no error:
+#   /usr/src/tensorrt/bin/trtexec --loadEngine=../models/peoplenet_fp16.engine
+# and read the Output bindings it prints.
+output-blob-names=output_bbox/BiasAdd;output_cov/Sigmoid
+
+# uff-input-blob-name applies ONLY to the old .etlt/UFF path. Current PeopleNet
+# ships as ONNX, where the input name comes from the model itself and this key
+# is ignored. Left commented rather than deleted so an .etlt deployment knows
+# where it goes.
+#uff-input-blob-name=input_1
+
+batch-size=1
+# 0 = FP32, 1 = INT8, 2 = FP16. Must match how the engine was built.
+network-mode=2
+num-detected-classes=3
+interval=0
+gie-unique-id=1
+# 0 = detector.
+network-type=0
+
+# 1 = DBSCAN. This is what removes the many overlapping boxes DetectNet_v2
+# emits per object — one per grid cell above threshold. Without clustering a
+# single person arrives as a dozen detections.
+cluster-mode=1
+
+# ── per-class thresholds ──────────────────────────────────────────────────────
+# class-attrs-all applies to every class; a class-attrs-<id> block overrides it
+# for that one. Ids follow labelfile order.
+#
+# pre-cluster-threshold is DeepStream's own confidence floor. Keep it at or
+# below confidence_threshold in models.yaml, which is applied afterwards — set
+# it higher here and the models.yaml value silently stops having any effect.
+
+[class-attrs-all]
+pre-cluster-threshold=0.4
+eps=0.7
+minBoxes=1
+dbscan-min-score=0.5
+
+# 0 = person
+[class-attrs-0]
+pre-cluster-threshold=0.4
+eps=0.7
+minBoxes=1
+dbscan-min-score=0.5
+
+# 1 = bag
+[class-attrs-1]
+pre-cluster-threshold=0.5
+eps=0.7
+minBoxes=1
+dbscan-min-score=0.5
+
+# 2 = face
+[class-attrs-2]
+pre-cluster-threshold=0.5
+eps=0.7
+minBoxes=1
+dbscan-min-score=0.5

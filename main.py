@@ -103,6 +103,13 @@ async def run(config_dir: str) -> None:
         p.stop()
     await asyncio.gather(*tasks, return_exceptions=True)
 
+    # After the pipelines have stopped, so nothing is mid-inference, and before
+    # the services below — a backend holding something outside the interpreter
+    # (a GStreamer pipeline, a device handle) needs releasing explicitly rather
+    # than being left to process exit.
+    log.info("releasing models...")
+    registry.close()
+
     log.info("stopping background services...")
     await health.stop()
     await ingest.stop()

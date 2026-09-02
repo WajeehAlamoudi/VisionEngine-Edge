@@ -189,19 +189,3 @@ cameras:
     zones: "*"
 
 
-  # ── case 4: Raspberry Pi with Hailo hat — hardware-accelerated camera ────────
-  # Same scene as cam-03 but running on a Pi.
-  # Uses the Hailo-compiled model for 5-10x faster inference than CPU.
-  # model_id references the .hef file — device: hailo is set inside models.yaml.
-
-  - id: cam-04
-    name: "Rooftop Camera"
-    source: "rtsp://YOUR_CAMERA_IP/stream3"
-    enabled: false
-    fps_target: 10                    # Hailo can handle higher FPS than CPU
-    model_id: general_coco_hailo
-    classes: [person, car]
-    raw_table: "detections"
-    zones:
-      - name: rooftop_area
-        polygon: [[0,0],[640,0],[640,480],[0,480]]

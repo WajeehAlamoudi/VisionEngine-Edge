@@ -350,6 +350,39 @@ class Reader:
             return None
         return stripped
 
+    def optional_string(self, key: str) -> str | None:
+        """
+        A key that may be absent entirely, or present as a non-empty string.
+
+        Every other reader here treats a missing key as an error, which is what
+        keeps a config honest: a typo'd key name is caught rather than silently
+        taking a default. Use this only for a key that is genuinely meaningless
+        for most entries — one tied to a single device or backend, where
+        requiring an explicit null everywhere would add noise to every config
+        that will never use it.
+
+        Absent and null both read as None; the caller decides whether that is
+        acceptable for the entry it is reading, since only the caller knows
+        which device is in play. An empty or non-string value is still an
+        error — that is a mistake, not an omission.
+        """
+        path = self._key_path(key)
+        if key not in self._raw:
+            return None
+
+        value = self._raw[key]
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            self._err(path, f"expected a string, got {describe(value)}")
+            return None
+
+        stripped = value.strip()
+        if not stripped:
+            self._err(path, "expected a non-empty string, or omit the key entirely")
+            return None
+        return stripped
+
     def uuid_string(self, key: str) -> str:
         """A required UUID string. Catches truncated or mangled pastes."""
         path = self._key_path(key)

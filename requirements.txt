@@ -31,6 +31,24 @@ PyYAML>=6.0.0               # YAML config file parsing
 #      index first (swap jp6/cu126 for your actual JetPack/CUDA version):
 #        https://pypi.jetson-ai-lab.io/jp6/cu126
 #
-# Hailo-8: torch is not used for inference (Hailo runtime handles it).
-#   Install CPU-only torch for config validation, or set device: cpu in models.yaml.
 torch>=2.0.0
+
+# ── device: deepstream ────────────────────────────────────────────────────────
+# Deliberately not pip-installable, and deliberately not listed above.
+#
+#   pyds   NVIDIA's DeepStream Python bindings. Not on PyPI and NOT bundled
+#          with DeepStream itself — download the linux_aarch64 wheel matching
+#          your DeepStream version from
+#          https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/releases
+#          A wheel built for a different version imports cleanly and then
+#          crashes on the first frame, so match it exactly.
+#
+#   gi     GStreamer's Python bindings, from apt, not pip:
+#          sudo apt install python3-gi python3-gst-1.0 gir1.2-gstreamer-1.0
+#
+# Both are system packages, so the venv must be created with
+# --system-site-packages. scripts/install.sh option 6 checks all of this.
+#
+# Neither is imported unless a model actually sets device: deepstream —
+# DeepStreamDetector imports them inside load(), so every other platform is
+# unaffected by this backend existing.

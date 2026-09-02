@@ -37,11 +37,10 @@ models:
   #               Format determines which device can run it. This pairing is
   #               enforced at startup:
   #                 .pt          PyTorch      → auto | cpu | cuda | mps
-  #                 .onnx        ONNX         → auto | cpu | cuda | mps
-  #                 .engine      TensorRT     → cuda only
+  #                 .onnx        ONNX         → auto | cpu | cuda | mps | deepstream
+  #                 .engine      TensorRT     → cuda | deepstream
   #                 .tflite      TF Lite      → cpu
   #                 .mlpackage   CoreML       → coreml
-  #                 .hef         Hailo        → hailo
   #
   #               .engine excludes "auto" on purpose: auto resolves to CPU when
   #               no GPU is present, and a TensorRT engine cannot load on CPU.
@@ -51,8 +50,13 @@ models:
   #   device      Hardware accelerator to use for inference.
   #               auto     → detect best available at startup (recommended)
   #               cpu      → force CPU (slowest, works everywhere)
-  #               cuda     → NVIDIA GPU (Jetson, desktop GPU)
-  #               hailo    → Hailo-8 / Hailo-8L hat (Raspberry Pi)
+  #               cuda     → NVIDIA GPU (Jetson, desktop GPU) via Ultralytics
+  #               deepstream → NVIDIA GPU via the DeepStream SDK — nvinfer for
+  #                          detection and nvtracker for tracking, in one
+  #                          GStreamer pipeline. Same hardware as cuda, a
+  #                          different runtime on it. Jetson / dGPU only, and
+  #                          needs DeepStream plus the pyds bindings installed.
+  #                          See "device: deepstream" below.
   #               coreml   → Apple Neural Engine (Mac Mini M-series)
   #               mps      → Apple Metal (Mac Mini M-series, PyTorch)
   #
@@ -97,7 +101,14 @@ models:
   #               Must match what the model was trained with.
   #               Standard YOLO sizes: [320,320] (fast), [640,640] (balanced), [1280,1280] (accurate)
   #
-  #   use_tracker true  → BoT-SORT tracker enabled — track_id is populated per object,
+  #   use_tracker The switch for tracking, and it means the same thing on every
+  #               device — what changes is which tracker it turns on. On
+  #               deepstream it decides whether an nvtracker element is built
+  #               into the pipeline at all; false there means detection only,
+  #               with NvDCF never running and track_id null, exactly as on any
+  #               other device.
+  #
+  #               true  → tracker enabled — track_id is populated per object,
   #                        letting you follow the same object across frames for dwell,
   #                        trajectory, and re-identification analytics in SQL.
   #                        Each camera using this model gets its own dedicated model
@@ -112,13 +123,40 @@ models:
   #               Copy config/config_sample/botsort_tracker.sample.yaml and tune
   #               it per device.
   #
-  #               Only BoT-SORT is implemented — see core/model/tracker/registry.py.
+  #               On every device except deepstream, BoT-SORT is the only
+  #               algorithm implemented — see core/model/tracker/registry.py.
   #               There is no way to select ByteTrack; naming a different file
   #               changes the parameters, never the algorithm.
   #
-  #               The file must exist when use_tracker: true. A missing file
-  #               used to fall back silently to ReID-disabled defaults, which
-  #               produced tracking that ran but re-assigned IDs constantly.
+  #               On device: deepstream this field means something slightly
+  #               different — it is nvtracker's config, and it DOES choose the
+  #               algorithm. Point it at one of DeepStream's own files:
+  #                 config_tracker_IOU.yml           cheapest, weak through occlusion
+  #                 config_tracker_NvSORT.yml        light Kalman tracker
+  #                 config_tracker_NvDCF_perf.yml    balanced — start here
+  #                 config_tracker_NvDCF_accuracy.yml
+  #                 config_tracker_NvDeepSORT.yml    strongest, runs a ReID network
+  #               They are installed at /opt/nvidia/deepstream/deepstream/
+  #               samples/configs/deepstream-app/. Swapping tracker algorithms
+  #               is exactly this one line.
+  #
+  #               The file must exist when use_tracker: true, on any device. A
+  #               missing file used to fall back silently to ReID-disabled
+  #               defaults, which produced tracking that ran but re-assigned
+  #               IDs constantly.
+  #
+  #   ds_infer_config
+  #               nvinfer's configuration file. REQUIRED for device: deepstream,
+  #               ignored (with a warning) on every other device.
+  #
+  #               This is where the network itself is described — input shape,
+  #               class count, precision, clustering — none of which map onto
+  #               the fields above. Copy
+  #               config/config_sample/deepstream_infer.sample.txt and edit it.
+  #
+  #               `path` above still names the engine and overrides whatever
+  #               model-engine-file this file contains, so models.yaml stays
+  #               the single source of truth for which weights are running.
   #
   #   half        FP16 inference — true = run the model at half precision.
   #               Only takes effect when device resolves to cuda (a real GPU);
@@ -195,32 +233,7 @@ models:
     half: false
 
 
-  # ── model 4: Hailo compiled (Raspberry Pi + Hailo-8L hat) ───────────────────
-  # Same weights as general_coco but compiled for the Hailo accelerator.
-  # Only works on a Pi with the Hailo hat installed.
-  # Provides 5–10× faster inference than CPU on the same Pi.
-
-  - id: general_coco_hailo
-    name: "YOLOv8 General COCO — Hailo"
-    version: "1.0.0"
-    path: "./models/yolov8n_hailo8l.hef"
-    device: hailo
-    classes:
-      - person
-      - bicycle
-      - car
-      - motorcycle
-      - bus
-      - truck
-    confidence_threshold: 0.5
-    iou_threshold: 0.45
-    input_size: [640, 640]
-    use_tracker: false
-    tracker: "config/botsort_tracker.yaml"
-    half: false
-
-
-  # ── model 5: CoreML compiled (Mac Mini M-series) ────────────────────────────
+  # ── model 4: CoreML compiled (Mac Mini M-series) ────────────────────────────
   # Same weights as general_coco but exported to CoreML for the Apple Neural
   # Engine. The .mlpackage's execution target is fixed at export time, so
   # half: is always ignored here (see UltralyticsDetector.infer).
@@ -243,3 +256,38 @@ models:
     use_tracker: false
     tracker: "config/botsort_tracker.yaml"
     half: false
+
+
+  # ── model 5: NVIDIA PeopleNet via DeepStream (Jetson) ───────────────────────
+  # NVIDIA's people-specific detector, run through the DeepStream SDK rather
+  # than Ultralytics. Detection (nvinfer) and tracking (nvtracker) happen in one
+  # GStreamer pipeline on the same GPU buffers, so this entry produces track_id
+  # without any BoT-SORT tracker being built.
+  #
+  # Better than COCO YOLO on crowds, partial occlusion and overhead camera
+  # angles, which is the reason to use it. Detects person, bag and face; narrow
+  # `classes` and the camera's own filter to whichever you actually need.
+  #
+  # Requires: a Jetson (or dGPU) with DeepStream installed, the pyds Python
+  # bindings, and an engine built ON THIS DEVICE with trtexec. Choose option 5
+  # in scripts/install.sh to set the dependencies up.
+  #
+  # To run TrafficCamNet, DashCamNet or FaceDetect instead, change path,
+  # ds_infer_config, classes and input_size — no code changes.
+
+  - id: peoplenet
+    name: "NVIDIA PeopleNet — DeepStream + NvDCF"
+    version: "2.6.1"
+    path: "./models/peoplenet_fp16.engine"
+    device: deepstream
+    ds_infer_config: "config/deepstream_infer.txt"
+    classes:
+      - person
+      - bag
+      - face
+    confidence_threshold: 0.4
+    iou_threshold: 0.45     # applied by nvinfer's clustering, not here
+    input_size: [960, 544]  # PeopleNet's fixed input — must match infer-dims
+    use_tracker: true       # false = detection only, no nvtracker built at all
+    tracker: "config/nvdcf_tracker.yml"
+    half: false             # precision is fixed when the engine is built

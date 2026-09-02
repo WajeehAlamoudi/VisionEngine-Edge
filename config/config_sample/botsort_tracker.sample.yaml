@@ -134,7 +134,7 @@ reid_backend: pytorch
 # A TORCH device, which is not necessarily the detector's device.
 #   auto → follow models.yaml when it names a torch device, else cpu
 #   cpu | cuda | mps
-# A Hailo or CoreML detector still needs its ReID on cpu or cuda: those are
+# A CoreML or DeepStream detector still needs its ReID on cpu or cuda: those are
 # not torch devices, and reusing them here used to raise at model load.
 reid_device: auto
 

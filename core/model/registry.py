@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from core.config import CameraConfig, ModelConfig
+from .detector import is_shareable
 from .runner import ModelRunner
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,12 @@ class ModelRegistry:
                     f"this should have been caught by config validation"
                 )
             model_cfg = models[cam.model_id]
-            if model_cfg.use_tracker:
+            # Sharing below is only safe for a stateless detector that can
+            # serve any camera. use_tracker covers tracker state; is_shareable
+            # covers backends unshareable for their own reasons — a DeepStream
+            # pipeline negotiates caps for one frame size and cannot take a
+            # second camera at another resolution, tracking or not.
+            if model_cfg.use_tracker or not is_shareable(model_cfg):
                 # tracker is stateful — each camera needs its own dedicated runner
                 runner = ModelRunner(model_cfg, use_tracker=True, tracker=model_cfg.tracker)
                 runner.load()
@@ -48,3 +54,23 @@ class ModelRegistry:
 
     def get(self, camera_id: str) -> ModelRunner:
         return self._runners[camera_id]
+
+    def close(self) -> None:
+        """
+        Release every runner's resources on shutdown.
+
+        Deduplicated by identity because predict-only cameras share a runner —
+        the map is keyed by camera, so several keys can point at one instance.
+        Each close is guarded: a backend that fails to shut down cleanly must
+        not stop the others from being released.
+        """
+        seen: set[int] = set()
+        for camera_id, runner in self._runners.items():
+            if id(runner) in seen:
+                continue
+            seen.add(id(runner))
+            try:
+                runner.close()
+            except Exception:
+                log.exception("error closing model runner for camera '%s'", camera_id)
+        self._runners.clear()

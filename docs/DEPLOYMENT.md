@@ -14,7 +14,7 @@
 <br/>
 
 [![Platform](https://img.shields.io/badge/Jetson-Orin%20NX-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://developer.nvidia.com/embedded/jetson-orin)
-[![Platform](https://img.shields.io/badge/Raspberry%20Pi-Hailo--8L-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://www.raspberrypi.com)
+[![Platform](https://img.shields.io/badge/Jetson-DeepStream-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://developer.nvidia.com/deepstream-sdk)
 [![Backend](https://img.shields.io/badge/Postgres-per--branch%20schema-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://postgresql.org)
 
 <br/>
@@ -204,8 +204,8 @@ yolo export model=yolo26n.pt format=engine half=True imgsz=640 device=0
 The build goes quiet for several minutes after `Local timing cache in use` — that
 is kernel profiling, not a hang. Wait for `export success`.
 
-> A Hailo `.hef` is the opposite case: compiled on an x86 machine with the Hailo
-> Dataflow Compiler and copied to the Pi. See the README's Hailo section.
+> A `.pt` is the opposite case: it runs anywhere, which is why it stays the
+> fallback when an engine will not build.
 
 ### 3.3 ReID model
 

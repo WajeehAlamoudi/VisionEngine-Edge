@@ -15,7 +15,7 @@
 
 [![Detect](https://img.shields.io/badge/Detect-YOLO-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://ultralytics.com)
 [![Track](https://img.shields.io/badge/Track-BoT--SORT%20%2B%20OSNet-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://github.com/mikel-brostrom/boxmot)
-[![Accel](https://img.shields.io/badge/Accel-TensorRT%20%7C%20Hailo%20%7C%20CoreML-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](#detector-backends)
+[![Accel](https://img.shields.io/badge/Accel-TensorRT%20%7C%20DeepStream%20%7C%20CoreML-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](#detector-backends)
 
 <br/>
 
@@ -77,12 +77,51 @@ a million useful rows a day and one that writes ten million, most of them noise.
 | `cuda` | Ultralytics | `.pt` / `.engine` | Jetson and desktop NVIDIA |
 | `mps` | Ultralytics | `.pt` | Apple Metal |
 | `coreml` | Ultralytics | `.mlpackage` | Execution target is fixed **at export time**, not by `device=` |
-| `hailo` | HailoRT | `.hef` | Not a torch device at all — never goes through Ultralytics |
+| `deepstream` | DeepStream | `.engine` / `.onnx` | Same NVIDIA hardware as `cuda`, different runtime on it. **Tracks too** when `use_tracker` is on — see below |
 
 Each backend imports its SDK **lazily, inside its own `load()`/`infer()`** —
-never at module top level. That is what lets a machine with no Hailo hardware
-run every other backend normally, and vice versa. Adding a backend means one
+never at module top level. That is what lets a machine with no DeepStream
+install run every other backend normally, and vice versa. Adding a backend means one
 entry in `core/model/detector/registry.py`; nothing above it changes.
+
+### Detectors that track
+
+`Detector` is normally stateless and detection-only: `infer()` returns
+`track_id=None`, and the `tracker/` layer adds ids afterwards. That split is
+what lets any tracker sit behind any detector.
+
+DeepStream cannot be split that way. `nvinfer` (detection) and `nvtracker`
+(tracking) are elements in one GStreamer pipeline, operating on the same GPU
+buffers in the same pass; `nvtracker` tracks the boxes `nvinfer` just produced
+and cannot accept detections from anywhere else. So it lives *inside*
+`DeepStreamDetector` rather than behind the `Tracker` ABC.
+
+Two flags carry that upward, and they answer genuinely different questions:
+
+```python
+class Detector(ABC):
+    tracks_internally: bool = False   # assigns track_id itself
+    shareable: bool = True            # one instance can serve several cameras
+```
+
+- **`tracks_internally`** is read by `ModelRunner.load()`, which then skips
+  building a `Tracker`. Building one would re-track already-tracked boxes and
+  throw the pipeline's ids away. It is read through
+  `registry.tracks_internally(cfg)` rather than off the class, because it also
+  depends on config: DeepStream with `use_tracker: false` builds no `nvtracker`
+  at all and is then an ordinary detection-only backend.
+- **`shareable`** is read by `ModelRegistry.load_for_cameras()`, which then
+  gives the model a dedicated instance per camera. Tracking state is one reason
+  to be unshareable, but not the only one — a DeepStream pipeline negotiates
+  caps once for a single frame size, so a second camera at another resolution
+  could not use it whether or not tracking is on.
+
+Both are answered from class attributes without constructing anything, so
+neither decision costs an SDK load.
+
+Both backends route their raw integer ids through the same `StableIdMap`
+(`core/model/stable_id.py`), so every `track_id` reaching the database is a
+UUID regardless of which produced it.
 
 ### Model formats
 
@@ -93,11 +132,9 @@ it runs.**
 |---|---|---|
 | `.pt` | anywhere | Yes — the fallback that always works |
 | `.engine` (TensorRT) | **on the target device** | No. Tied to that GPU and TensorRT version |
-| `.hef` (Hailo) | **on an x86 machine**, via the Dataflow Compiler | Yes — compiled off-device, copied to the Pi |
 | `.mlpackage` (CoreML) | on a Mac | Its compute unit is baked in at export |
 
-TensorRT and Hailo are exact opposites, and mixing up which is which costs an
-afternoon. Export commands are in
+Export commands are in
 [DEPLOYMENT § Stage 3](DEPLOYMENT.md#32-detector-model).
 
 ### Why TensorRT is worth the inconvenience
@@ -221,7 +258,7 @@ the detector backends trust it. If it is genuinely missing, the `ImportError`
 is the correct failure.
 
 `reid_device` is a **torch** device and is not necessarily the detector's. A
-Hailo or CoreML detector still needs its ReID on cpu or cuda — those are not
+CoreML or DeepStream detector still needs its ReID on cpu or cuda — those are not
 torch devices, and reusing them used to raise at model load.
 
 ### Dynamic batch is mandatory

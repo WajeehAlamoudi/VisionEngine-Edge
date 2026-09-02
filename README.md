@@ -100,7 +100,7 @@ One pipeline per camera, each an independent task — a failing camera does not 
 
 ## Features
 
-- **Detection backends** — Ultralytics (`.pt`, `.engine`, `.mlpackage`) and Hailo (`.hef`), each importing its SDK lazily so one device's runtime can't break another's
+- **Detection backends** — Ultralytics (`.pt`, `.engine`, `.mlpackage`) and DeepStream (`.engine`), each importing its SDK lazily so one device's runtime can't break another's
 - **BoT-SORT tracking** with **OSNet ReID** — persistent `track_id` across frames and occlusion, per-model toggle
 - **TensorRT acceleration** — detector and ReID both run as compiled engines; see the [benchmark](docs/ARCHITECTURE.md#benchmark)
 - **Zone analytics** — polygon zones in native camera resolution, click-to-draw builder, person membership tested at the feet
@@ -119,7 +119,6 @@ One pipeline per camera, each an independent task — a failing camera does not 
 |--------|-----------|--------------|--------|
 | Raspberry Pi 4 (CPU) | PyTorch `.pt` | 1–2 | Verified |
 | Raspberry Pi 5 (CPU) | PyTorch `.pt` | 2–3 | Verified |
-| Raspberry Pi + Hailo-8/8L | Hailo `.hef` | TBD | Blocked — see [Hailo Backend](#hailo-backend) |
 | **Jetson Orin NX** | **TensorRT `.engine` + TensorRT ReID** | **9.6–10.7** | **Verified** — 4 cameras @ 960×480, ~41 fps aggregate |
 | Jetson Nano | CUDA `.pt` | 5–8 | Estimated |
 | Mac Mini (M-series) | MPS / CoreML | 10–20 | Estimated |
@@ -127,40 +126,6 @@ One pipeline per camera, each an independent task — a failing camera does not 
 The Jetson figures are measured with tracking and appearance matching **on** throughout, over 10-second windows with people in frame. The same hardware managed 4.0–4.7 fps/camera before the ReID model was moved to TensorRT — full per-stage breakdown in [Architecture § Benchmark](docs/ARCHITECTURE.md#benchmark).
 
 Figures marked "Estimated" are not measurements — treat them as a starting expectation, not a spec.
-
----
-
-## Hailo Backend
-
-CPU, CUDA, and MPS all run through the same Ultralytics/torch code path — swapping between them is genuinely a one-line `device:` change in `models.yaml`. Hailo does not work this way, and that's not a temporary gap — it's a structural difference worth understanding before planning around it.
-
-### Why Hailo is different
-
-- A `.hef` file has no PyTorch/Ultralytics runtime behind it at all. Inference on a Hailo chip runs entirely through **HailoRT** (Hailo's own SDK), via a separate `HailoDetector` backend (`core/model/detector/hailo_detector.py`) — not through `ultralytics.YOLO.predict()`.
-- Getting a model onto Hailo is a two-step, two-machine process:
-  1. **Convert** `.pt → .hef` using Ultralytics' export (`yolo export model=X.pt format=hailo name=hailo8`) plus Hailo's Dataflow Compiler. This step only runs on **x86_64 Linux with Python 3.10** — not on the edge device itself (Hailo compilation isn't supported on ARM), and not on any other Python version (the Dataflow Compiler is only built for 3.10).
-  2. **Deploy** the resulting `.hef` *and* its accompanying `metadata.yaml` (written alongside it by the export) together to the edge device — `HailoDetector` reads the model's real class list from `metadata.yaml` at load time, since a `.hef` carries no class names of its own. Copying the `.hef` alone is not sufficient.
-- Only **YOLOv8, YOLO11, and YOLO26** architectures can export to Hailo format today. Other YOLO versions (e.g. YOLOv12) are rejected by Ultralytics' own exporter before it even reaches the Hailo compiler — this is not a configuration problem and can't be worked around from this codebase.
-
-This is the mirror image of TensorRT, where the engine must be built **on** the device that runs it. Getting the two backwards costs an afternoon.
-
-### Known limitation — dependency conflict on-device
-
-HailoRT versions **before 5.3.0** require `numpy==1.23.3` to run inference correctly; without it, `hailo_platform` returns a zero-byte input buffer to the chip regardless of what data is actually sent, and every inference call fails with:
-```
-[HailoRT] [error] CHECK failed - Memory size of vstream ... does not match the frame count! (Expected N, got 0)
-```
-This is not fixable from application code — it's a numpy ABI compatibility issue inside HailoRT's compiled bindings.
-
-The conflict: the tracker library this project uses (`boxmot`) requires `numpy>=2.2.0` — the exact opposite constraint. The two cannot be pinned to a mutually compatible numpy version in one shared Python environment.
-
-As of this writing, **Raspberry Pi OS's own apt repository only packages HailoRT up to 4.20.0** — the numpy-2.x-compatible 5.3.0+ release isn't available through it. Installing a newer HailoRT manually is possible but uses a driver/firmware stack Raspberry Pi hasn't packaged or tested for their AI Kit integration, and carries real risk to a working setup.
-
-**Net effect:** on a device where both Hailo detection and BoT-SORT tracking (`use_tracker: true`) need to run together in the current single-process architecture, this dependency conflict currently blocks it from running end-to-end.
-
-### Next planned change
-
-Isolate `HailoDetector`'s inference call into its own dedicated environment (a separate Python 3.11 venv pinned to `numpy==1.23.3`, containing only `hailo_platform`) and have it communicate with the main process — instead of importing `hailo_platform` directly into the same process as `boxmot`/`torch`. This keeps HailoRT's dependency constraints from ever touching the rest of the stack, without waiting on an upstream HailoRT release or an apt package update. Not yet implemented.
 
 ---
 
@@ -182,7 +147,7 @@ cd /opt/visionengine
 bash scripts/install.sh
 ```
 
-One interactive script, one entry point for every supported device. It asks what hardware this is (Raspberry Pi / CPU, Jetson, generic CUDA PC, Mac, Hailo) and sets up torch correctly for that device — including reusing an already-working Jetson torch instead of shadowing it with a broken generic build, which a plain `pip install` would do silently. It creates `.venv`, installs `requirements.txt`, creates `models/`, `data/`, `logs/`, `collected/`, and copies **all eight** config templates from `config/config_sample/` into `config/`.
+One interactive script, one entry point for every supported device. It asks what hardware this is (Raspberry Pi / CPU, Jetson, generic CUDA PC, Mac, Jetson + DeepStream) and sets up torch correctly for that device — including reusing an already-working Jetson torch instead of shadowing it with a broken generic build, which a plain `pip install` would do silently. It creates `.venv`, installs `requirements.txt`, creates `models/`, `data/`, `logs/`, `collected/`, and copies **all eight** config templates from `config/config_sample/` into `config/`.
 
 It copies templates only — it never generates config content. Filling in real values is a deliberate, reviewable act.
 
@@ -200,7 +165,7 @@ python3 -c "from core.config import load_config; c = load_config('config'); prin
 
 ### 4 — Model weights
 
-Not included in the repo (gitignored — they're large binaries). Place your `.pt` / `.engine` / `.mlpackage` / `.hef` file in `models/`, matching the `path:` you set in `models.yaml`.
+Not included in the repo (gitignored — they're large binaries). Place your `.pt` / `.engine` / `.mlpackage` file in `models/`, matching the `path:` you set in `models.yaml`.
 
 A TensorRT `.engine` must be exported **on** the device that will run it. Both the detector and the ReID exports are in [Deployment § Stage 3](docs/DEPLOYMENT.md#stage-3--edge-device).
 
@@ -321,7 +286,7 @@ VisionEngine-Edge/
 │   ├── config/                 ← strict YAML parsers + cross-file validation + AppConfig
 │   ├── pipeline/               ← per-camera loop, enrichment, row builders
 │   ├── model/
-│   │   ├── detector/           ← Ultralytics and Hailo backends + registry
+│   │   ├── detector/           ← Ultralytics and DeepStream backends + registry
 │   │   └── tracker/            ← BoT-SORT via boxmot, ReID backend selection
 │   ├── zone/                   ← point-in-polygon zone assignment
 │   ├── rules/                  ← RulesEngine + DetectionEvent + RuleMatch
@@ -332,7 +297,7 @@ VisionEngine-Edge/
 │   └── collector/              ← dataset frame sampler
 ├── tools/
 │   └── debug/                  ← view / zones / inference debug modes
-└── models/                     ← model weight files (.pt, .engine, .hef, .mlpackage)
+└── models/                     ← model weight files (.pt, .engine, .mlpackage)
 ```
 
 ---

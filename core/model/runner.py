@@ -32,7 +32,10 @@ class ModelRunner:
     def load(self) -> None:
         self._detector = build_detector(self._cfg)
         self._detector.load()
-        if self._use_tracker:
+        # A backend that tracks internally has already assigned track_id by the
+        # time infer() returns. Building a Tracker on top would re-track boxes
+        # that are already tracked, discarding those ids for a second set.
+        if self._use_tracker and not self._detector.tracks_internally:
             self._tracker = build_tracker(self._cfg)
             self._tracker.load()
 
@@ -41,3 +44,8 @@ class ModelRunner:
         if self._tracker is None:
             return detections
         return self._tracker.update(frame, detections)
+
+    def close(self) -> None:
+        """Release the detector's resources. Safe to call more than once."""
+        if self._detector is not None:
+            self._detector.close()

@@ -147,20 +147,21 @@ echo "    1) Raspberry Pi / CPU-only device"
 echo "    2) NVIDIA Jetson (CUDA via JetPack)"
 echo "    3) Generic PC/server with an NVIDIA GPU (CUDA)"
 echo "    4) Mac (Apple Silicon / MPS)"
-echo "    5) Raspberry Pi + Hailo accelerator"
+echo "    5) NVIDIA Jetson + DeepStream (PeopleNet / nvinfer + nvtracker)"
 echo ""
 device_choice="$(prompt_choice "  Choice" "1" "1 2 3 4 5")"
 
 USE_SYSTEM_SITE_PACKAGES=0
 TORCH_INSTALL_CMD=""
 POST_INSTALL_NOTE=""
+SETUP_DEEPSTREAM=0
 
 # what models.yaml's own device: field should be for this hardware
 case "$device_choice" in
-    2|3) MODEL_DEVICE="cuda"  ;;
-    4)   MODEL_DEVICE="mps"   ;;
-    5)   MODEL_DEVICE="hailo" ;;
-    *)   MODEL_DEVICE="cpu"   ;;
+    2|3) MODEL_DEVICE="cuda"       ;;
+    4)   MODEL_DEVICE="mps"        ;;
+    5)   MODEL_DEVICE="deepstream" ;;
+    *)   MODEL_DEVICE="cpu"        ;;
 esac
 
 case "$device_choice" in
@@ -196,9 +197,58 @@ case "$device_choice" in
         TORCH_INSTALL_CMD=""
         ;;
     5)
-        info "Raspberry Pi + Hailo — installing CPU-only torch (Hailo runtime, not torch, does inference)"
-        TORCH_INSTALL_CMD="$VENV_DIR/bin/pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu"
-        POST_INSTALL_NOTE="Hailo needs its own SDK (hailo_platform) set up separately — see the 'Hailo Backend' section in README.md. Its numpy requirement conflicts with this project's other dependencies in one shared environment; that isolation is not yet automated by this script."
+        echo ""
+        info "Jetson + DeepStream — checking the SDK before anything is installed"
+
+        DS_ROOT="/opt/nvidia/deepstream/deepstream"
+        [ -d "$DS_ROOT" ] || error "DeepStream not found at $DS_ROOT. Install it through SDK Manager or apt (deepstream-<version>), then re-run."
+
+        if [ -f "$DS_ROOT/version" ]; then
+            info "DeepStream: $(tr -d '\0' < "$DS_ROOT/version" | head -1)"
+        else
+            warn "DeepStream found but its version file is missing — continuing"
+        fi
+
+        [ -f "$DS_ROOT/lib/libnvds_nvmultiobjecttracker.so" ] \
+            || error "DeepStream is present but the tracker library is missing: $DS_ROOT/lib/libnvds_nvmultiobjecttracker.so"
+        info "NvTracker library present"
+
+        # GStreamer's Python bindings are separate from DeepStream's own
+        # plugins — the C elements being installed does not imply gi is. The
+        # pipeline is built from Python, so both are needed.
+        if ! "$PYTHON" -c "import gi; gi.require_version('Gst','1.0'); from gi.repository import Gst" 2>/dev/null; then
+            warn "GStreamer Python bindings (gi) are missing."
+            gi_install="$(prompt_yes_no "  Install python3-gi and python3-gst-1.0 with apt now?" "y")"
+            if [ "$gi_install" = "y" ]; then
+                run_with_spinner "Installing GStreamer Python bindings..." \
+                    sudo apt-get install -y python3-gi python3-gst-1.0 gir1.2-gstreamer-1.0
+            else
+                error "gi is required for device: deepstream. Install it and re-run."
+            fi
+        fi
+        info "GStreamer Python bindings present"
+
+        # System packages, so the venv has to be able to see them. Same reason
+        # the plain Jetson path uses this flag for torch.
+        USE_SYSTEM_SITE_PACKAGES=1
+        SETUP_DEEPSTREAM=1
+
+        # torch is not used for inference here — nvinfer is — but device
+        # auto-selection and the boxmot tracker still import it, so a working
+        # build must exist for the rest of the project.
+        if "$PYTHON" -c "import torch" 2>/dev/null; then
+            info "torch present — venv will reuse it"
+        else
+            warn "torch is not installed system-wide. It is not used for DeepStream inference,"
+            warn "but other backends and config validation import it. See requirements.txt"
+            warn "for the JetPack-matched wheel index."
+        fi
+
+        if ! "$PYTHON" -c "import pyds" 2>/dev/null; then
+            POST_INSTALL_NOTE="pyds is NOT installed, and device: deepstream cannot run without it. It does not ship with DeepStream and is not on PyPI: download the linux_aarch64 wheel matching YOUR DeepStream version from https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/releases and install it into the venv with '.venv/bin/pip install <wheel>'. A wheel built for a different DeepStream version will import cleanly and then crash on the first frame, so match the version exactly."
+        else
+            info "pyds present"
+        fi
         ;;
     *)
         info "CPU-only device — installing the smaller CPU-only torch build"
@@ -241,7 +291,7 @@ mkdir -p "$SCRIPT_DIR/collected"
 mkdir -p "$SCRIPT_DIR/logs"
 mkdir -p "$SCRIPT_DIR/data"
 
-# model weight files (.pt/.onnx/.engine/.hef) are gitignored — a fresh clone
+# model weight files (.pt/.onnx/.engine) are gitignored — a fresh clone
 # has nowhere to put them until this exists
 mkdir -p "$SCRIPT_DIR/models"
 
@@ -262,6 +312,80 @@ for f in api notifications rules collection device models cameras botsort_tracke
         info "Created config/$f.yaml from sample"
     fi
 done
+
+# ── DeepStream config files ───────────────────────────────────────────────────
+# Only for device option 6. These are not .sample.yaml files so they sit
+# outside the loop above: two are plain text, and the tracker config is copied
+# from the installed SDK so it always matches the DeepStream version on this
+# device rather than a stale copy checked into the repo.
+if [ "$SETUP_DEEPSTREAM" -eq 1 ]; then
+    echo ""
+    info "Setting up DeepStream config files..."
+
+    src="$SCRIPT_DIR/config/config_sample/deepstream_infer.sample.txt"
+    dest="$SCRIPT_DIR/config/deepstream_infer.txt"
+    if [ -f "$dest" ]; then
+        warn "config/deepstream_infer.txt already exists — left untouched"
+    elif [ -f "$src" ]; then
+        cp "$src" "$dest"
+        info "Created config/deepstream_infer.txt from sample"
+    fi
+
+    # Written rather than shipped as a sample: it is three well-known names.
+    # The file is required though — class_id indexes into the model's own
+    # ordered class list, which models.yaml `classes` cannot supply because it
+    # is a filter naming only the classes you want. Replace these lines when
+    # swapping to another model.
+    if [ -f "$SCRIPT_DIR/config/peoplenet_labels.txt" ]; then
+        warn "config/peoplenet_labels.txt already exists — left untouched"
+    else
+        printf 'person\nbag\nface\n' > "$SCRIPT_DIR/config/peoplenet_labels.txt"
+        info "Created config/peoplenet_labels.txt (person, bag, face)"
+    fi
+
+    DS_TRACKER_DIR="$DS_ROOT/samples/configs/deepstream-app"
+    if [ -f "$SCRIPT_DIR/config/nvdcf_tracker.yml" ]; then
+        warn "config/nvdcf_tracker.yml already exists — left untouched"
+    else
+        echo ""
+        echo "  Which NvTracker algorithm? (changeable later — it is just this file)"
+        echo "    1) NvDCF perf      — balanced, recommended"
+        echo "    2) NvDCF accuracy  — slower, better through occlusion"
+        echo "    3) NvSORT          — lightweight Kalman"
+        echo "    4) IOU             — cheapest, weakest"
+        echo "    5) NvDeepSORT      — strongest, runs a ReID network"
+        echo ""
+        tracker_choice="$(prompt_choice "  Choice" "1" "1 2 3 4 5")"
+        case "$tracker_choice" in
+            2) TRACKER_SRC="config_tracker_NvDCF_accuracy.yml" ;;
+            3) TRACKER_SRC="config_tracker_NvSORT.yml"         ;;
+            4) TRACKER_SRC="config_tracker_IOU.yml"            ;;
+            5) TRACKER_SRC="config_tracker_NvDeepSORT.yml"     ;;
+            *) TRACKER_SRC="config_tracker_NvDCF_perf.yml"     ;;
+        esac
+        # The SDK's own copy is preferred: it matches the DeepStream version
+        # installed here, and NVIDIA revises these values between releases. The
+        # bundled sample is only a fallback for an unusual install layout, and
+        # it is an NvDCF config regardless of the choice above.
+        if [ -f "$DS_TRACKER_DIR/$TRACKER_SRC" ]; then
+            cp "$DS_TRACKER_DIR/$TRACKER_SRC" "$SCRIPT_DIR/config/nvdcf_tracker.yml"
+            info "Created config/nvdcf_tracker.yml from the SDK's $TRACKER_SRC"
+        elif [ -f "$SCRIPT_DIR/config/config_sample/nvdcf_tracker.sample.yml" ]; then
+            cp "$SCRIPT_DIR/config/config_sample/nvdcf_tracker.sample.yml" \
+               "$SCRIPT_DIR/config/nvdcf_tracker.yml"
+            warn "$DS_TRACKER_DIR/$TRACKER_SRC not found — used the bundled NvDCF sample instead"
+            warn "Prefer your SDK's own config if you can find it: it matches your DeepStream version"
+        else
+            warn "No tracker config available — copy one into config/nvdcf_tracker.yml manually"
+        fi
+    fi
+
+    echo ""
+    warn "models/ needs a TensorRT engine built ON THIS DEVICE — engines are not portable"
+    warn "across GPUs or TensorRT versions. Download PeopleNet from NGC, then:"
+    echo "    /usr/src/tensorrt/bin/trtexec --onnx=resnet34_peoplenet.onnx \\"
+    echo "        --fp16 --saveEngine=$SCRIPT_DIR/models/peoplenet_fp16.engine"
+fi
 
 if [ -z "$(ls -A "$SCRIPT_DIR/models" 2>/dev/null)" ]; then
     warn "models/ is empty — copy your model weight file there before editing config/models.yaml"

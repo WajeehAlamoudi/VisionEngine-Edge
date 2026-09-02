@@ -1,0 +1,92 @@
+%YAML:1.0
+################################################################################
+# nvtracker configuration — NvDCF
+#
+# Read by DeepStream's libnvds_nvmultiobjecttracker.so, NOT by this project's
+# config loader. Copy to config/nvdcf_tracker.yml and point models.yaml at it:
+#   tracker: "config/nvdcf_tracker.yml"
+#
+# ── this file is a fallback ────────────────────────────────────────────────────
+# scripts/install.sh prefers the copy shipped with YOUR DeepStream install:
+#   /opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/
+# and only falls back to this one when that directory is missing. Prefer the
+# SDK's copy — it is tuned for the version you actually have, and NVIDIA
+# revises these values between releases. This file exists so the repo is
+# self-contained and reviewable, not as the authoritative tuning.
+#
+# ── choosing an algorithm ──────────────────────────────────────────────────────
+# The algorithm is chosen by WHICH FILE models.yaml `tracker:` names, not by a
+# setting inside it. All four live in the same shared library:
+#
+#   config_tracker_IOU.yml            cheapest, no motion model, weak on occlusion
+#   config_tracker_NvSORT.yml         Kalman only, light
+#   config_tracker_NvDCF_perf.yml     + visual correlation filter — this file
+#   config_tracker_NvDCF_accuracy.yml same, tuned for accuracy over speed
+#   config_tracker_NvDeepSORT.yml     + a ReID network, strongest and heaviest
+#
+# Swapping trackers is one line in models.yaml.
+################################################################################
+
+BaseConfig:
+  # Detections below this are ignored by the tracker entirely. Independent of
+  # confidence_threshold in models.yaml, which is applied after tracking.
+  minDetectorConfidence: 0.1894
+
+TargetManagement:
+  # Allow a predicted box to extend past the frame edge. The detector layer
+  # clamps boxes to the frame before they reach zones and rules.
+  enableBboxUnClipping: 1
+  # Hard ceiling per stream. Raise for dense scenes, at a memory cost.
+  maxTargetsPerStream: 150
+  # Frames a new target must survive before it is reported — the reason the
+  # first frame or two of a new object comes back with track_id null.
+  probationAge: 2
+  # Frames a lost target is predicted through before being dropped. This is
+  # what carries an identity across a person walking behind a pillar; raising
+  # it holds ids longer but risks re-attaching them to the wrong object.
+  maxShadowTrackingAge: 30
+  earlyTerminationAge: 1
+  minIouDiff4NewTarget: 0.3777
+  minTrackerConfidence: 0.1613
+
+TrajectoryManagement:
+  # 0 = ids restart from 0 each run. This project maps them to UUIDs anyway
+  # (core/model/stable_id.py), so a restart cannot collide with old records.
+  useUniqueID: 0
+
+DataAssociator:
+  dataAssociatorType: 0
+  associationMatcherType: 1
+  # Only match a detection to a target of the same class.
+  checkClassMatch: 1
+  minMatchingScore4Overall: 0.0
+  minMatchingScore4SizeSimilarity: 0.5942
+  minMatchingScore4Iou: 0.1144
+  minMatchingScore4VisualSimilarity: 0.7371
+  matchingScoreWeight4VisualSimilarity: 0.5581
+  matchingScoreWeight4SizeSimilarity: 0.0801
+  matchingScoreWeight4Iou: 0.1994
+
+StateEstimator:
+  # 1 = simple Kalman filter, 2 = regular. Higher process noise tracks erratic
+  # motion better; higher measurement noise trusts the detector less.
+  stateEstimatorType: 1
+  processNoiseVar4Loc: 2.0
+  processNoiseVar4Size: 1.0
+  processNoiseVar4Vel: 0.1
+  measurementNoiseVar4Detector: 4.0
+  measurementNoiseVar4Tracker: 16.0
+
+VisualTracker:
+  # 1 = NvDCF. This block is what separates NvDCF from NvSORT: a correlation
+  # filter on appearance, which is why it holds identity through occlusion far
+  # better and why it costs more.
+  visualTrackerType: 1
+  useColorNames: 1
+  useHog: 0
+  # Feature resolution level. Lowering it is the main speed knob here.
+  featureImgSizeLevel: 2
+  featureFocusOffsetFactor_y: -0.2
+  filterLr: 0.075
+  filterChannelWeightsLr: 0.1
+  gaussianSigma: 0.75

@@ -61,6 +61,9 @@ can be reviewed in a diff.
 | `notifications.yaml` | Log channel and webhook delivery, per-rule routing | Per use case |
 | `collection.yaml` | Dataset-building sessions | Optional |
 | `botsort_tracker.yaml` | Tracker tuning — device-specific | When tracking is on |
+| `deepstream_infer.txt` | nvinfer config — network shape, class count, clustering | `device: deepstream` only |
+| `peoplenet_labels.txt` | Model's class names, one per line, in model order | `device: deepstream` only |
+| `nvdcf_tracker.yml` | nvtracker config — chooses the tracking algorithm | `device: deepstream` + `use_tracker` |
 
 `botsort_tracker.yaml` is the odd one out: it is **not** loaded by
 `load_config()` and **not** strictly validated. It is read at model load time
@@ -116,6 +119,52 @@ only models used by an **enabled** camera are loaded or checked for existence.
 `tracker` points at the tracker config. `half` requests FP16 and is meaningful
 only on CUDA. Which device implies which backend is in
 [ARCHITECTURE](ARCHITECTURE.md#detector-backends).
+
+#### `device: deepstream`
+
+NVIDIA's DeepStream SDK, on Jetson or a dGPU. Same hardware as `cuda`, a
+different runtime on it: `nvinfer` for detection and `nvtracker` for tracking,
+in one GStreamer pipeline. Choose option 5 in `scripts/install.sh` to set up
+the dependencies — it verifies the SDK, installs the GStreamer Python
+bindings, and copies a tracker config out of the installed SDK so it matches
+your DeepStream version.
+
+Three fields behave differently on this device:
+
+| Field | On `deepstream` |
+|---|---|
+| `ds_infer_config` | **Required.** nvinfer's config — input shape, class count, precision, clustering. Omit the key entirely on every other device. |
+| `tracker` | Chooses the **algorithm**, not just its parameters — IOU, NvSORT, NvDCF or NvDeepSORT. Required when `use_tracker` is true. |
+| `use_tracker` | Means the same as everywhere else. `true` builds an `nvtracker` element into the pipeline; `false` builds none, so NvDCF never runs and `track_id` is null. |
+
+`path` still names the engine and overrides whatever `model-engine-file` the
+nvinfer config contains, so `models.yaml` stays the single source of truth for
+which weights are running.
+
+**Class names.** The nvinfer config's `labelfile-path` points at a plain text
+file listing the model's classes, one per line, **in the model's own order**.
+It is required, and `models.yaml` `classes` does not replace it — the two mean
+different things:
+
+| | Meaning | Order matters? | Subset allowed? |
+|---|---|---|---|
+| label file | what the model outputs | yes — `class_id` indexes into it | no, all of them |
+| `classes` | what you want to keep | no | yes, any subset |
+
+A ten-class model narrowed to `[person, cup]` still detects `cup` as `class_id
+5`; the label file is what knows that. `install.sh` writes
+`config/peoplenet_labels.txt` with PeopleNet's three names. A name in `classes`
+that appears nowhere in the label file is a startup error, since it could never
+match anything.
+
+Any NVIDIA TAO model on the DetectNet_v2 architecture — PeopleNet,
+TrafficCamNet, DashCamNet, FaceDetect — is a config change with no code change:
+update `path`, `ds_infer_config`, `classes` and `input_size`. Models with a
+different output head (PeopleNet Transformer, PeopleSegNet) need a custom
+parser library named in the nvinfer config.
+
+Requires `pyds`, which does **not** ship with DeepStream and is not on PyPI —
+the installer tells you where to get a version-matched wheel.
 
 ### `rules.yaml` — the storage gate
 
@@ -335,7 +384,7 @@ YAML at the camera's true resolution. See [TOOLS](TOOLS.md#zones-mode).
 4. Restart.
 
 A TensorRT `.engine` must be exported on the device that will run it — it is
-built for that exact GPU and TensorRT version. A Hailo `.hef` is the opposite:
+built for that exact GPU and TensorRT version. A `.pt` is the opposite:
 compiled on an x86 machine and copied to the Pi. See
 [ARCHITECTURE](ARCHITECTURE.md#model-formats).
 
