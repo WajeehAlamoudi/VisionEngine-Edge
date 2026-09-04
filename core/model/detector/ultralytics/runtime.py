@@ -26,6 +26,14 @@ log = logging.getLogger(__name__)
 _FFMPEG_ENV = "OPENCV_FFMPEG_CAPTURE_OPTIONS"
 _FFMPEG_ENV_LOCK = threading.Lock()
 
+# How long ffmpeg waits on the socket before giving up on a read, in
+# microseconds. Without it a camera that stops responding leaves grab() blocked
+# indefinitely: the loop cannot notice it has been asked to stop, and there is
+# no safe way to interrupt an OpenCV capture from another thread — releasing it
+# while a read is in flight is undefined. Bounding the read is the way to make
+# a dead camera detectable rather than a hang.
+_RTSP_SOCKET_TIMEOUT_US = 5_000_000
+
 # TCP + discard-corrupt handles H.264, H.265, and H.264+ (the non-standard SPS
 # headers Hikvision and Dahua emit). The large probe values give ffmpeg enough
 # of the stream to identify it before giving up.
@@ -34,6 +42,7 @@ _RTSP_OPTIONS = (
     "|fflags;+discardcorrupt+genpts"
     "|probesize;50000000"
     "|analyzeduration;50000000"
+    f"|stimeout;{_RTSP_SOCKET_TIMEOUT_US}"
 )
 
 
@@ -142,6 +151,9 @@ class UltralyticsCameraRuntime(CameraRuntime):
 
         while True:
             if not self._cap.grab():
+                # Either the stream ended or the socket timed out. Both mean
+                # the same thing here: no frame, and the loop should decide
+                # whether to retry or stop rather than block again.
                 raise SourceUnavailable("frame read failed")
 
             now = time.time()
