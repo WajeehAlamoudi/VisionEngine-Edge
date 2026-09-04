@@ -12,6 +12,7 @@ from core.config import load_config
 from core.health import HealthReporter
 from core.ingest import IngestWorker
 from core.model import ModelRegistry
+from core.model.detector import build_camera_runtime
 from core.notifier import Notifier
 from core.pipeline import CameraPipeline
 from core.rules import RulesEngine
@@ -53,10 +54,14 @@ async def run(config_dir: str) -> None:
 
     # ── build pipelines ───────────────────────────────────────────────────────
 
+    # Each camera's video path is chosen by its model's runtime: OpenCV for
+    # ultralytics, DeepStream's own for deepstream. CameraPipeline is identical
+    # either way - it receives detections and knows nothing about capture.
     pipelines = [
         CameraPipeline(
             cam=cam,
-            runner=registry.get(cam.id),
+            camera_runtime=build_camera_runtime(
+                cam, cfg.models[cam.model_id], registry.get(cam.id)),
             buffer=buffer,
             rules=rules,
             notifier=notifier,

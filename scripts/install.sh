@@ -315,7 +315,7 @@ for f in api notifications rules collection device models cameras botsort_tracke
 done
 
 # ── DeepStream config files ───────────────────────────────────────────────────
-# Only for device option 6. These are not .sample.yaml files so they sit
+# Only for device option 5. These are not .sample.yaml files so they sit
 # outside the loop above: two are plain text, and the tracker config is copied
 # from the installed SDK so it always matches the DeepStream version on this
 # device rather than a stale copy checked into the repo.

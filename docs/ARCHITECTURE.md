@@ -31,13 +31,11 @@ One `CameraPipeline` per enabled camera, each an independent asyncio task. A
 camera failing does not stop the others.
 
 ```
-  ┌── capture ─────────  RTSP / USB / file, timestamped at read
-  │
-  ├── detect ──────────  Detector backend → boxes, classes, confidences
-  │                      filtered to the camera's declared classes
-  │
-  ├── track ───────────  BoT-SORT: motion prediction + appearance match
-  │                      → assigns a stable track_id           [optional]
+  ┌── camera runtime ──  capture + inference, matched to each other:
+  │                      OpenCV → YOLO + BoT-SORT, or NVDEC → nvinfer
+  │                      → NvTracker. Returns boxes, classes, confidences
+  │                      and track_id, filtered to the camera's classes
+  │                      and timestamped at capture
   │
   ├── enrich ──────────  anchor point → zone name, normalized coords,
   │                      camera + frame context, capture timestamp
@@ -96,47 +94,60 @@ inside the SDK rather than at startup.
 
 Each backend imports its SDK **lazily, inside its own `load()`/`infer()`** —
 never at module top level. That is what lets a machine with no DeepStream
-install run every other backend normally, and vice versa. Adding a backend means one
-entry in `core/model/detector/registry.py`; nothing above it changes.
+install run every other backend normally, and vice versa. Adding a runtime means one directory under
+`core/model/detector/`; nothing above it changes.
 
-### Detectors that track
+### Camera runtimes
 
-`Detector` is normally stateless and detection-only: `infer()` returns
-`track_id=None`, and the `tracker/` layer adds ids afterwards. That split is
-what lets any tracker sit behind any detector.
+A runtime is a matched pair: how frames are captured, and how the model runs on
+them. The two are chosen together because the best capture depends entirely on
+what consumes the frame.
 
-DeepStream cannot be split that way. `nvinfer` (detection) and `nvtracker`
-(tracking) are elements in one GStreamer pipeline, operating on the same GPU
-buffers in the same pass; `nvtracker` tracks the boxes `nvinfer` just produced
-and cannot accept detections from anywhere else. So it lives *inside*
-`DeepStreamDetector` rather than behind the `Tracker` ABC.
-
-Two flags carry that upward, and they answer genuinely different questions:
-
-```python
-class Detector(ABC):
-    tracks_internally: bool = False   # assigns track_id itself
-    shareable: bool = True            # one instance can serve several cameras
+```
+CameraPipeline
+  ← detections ←
+CameraRuntime
+  ├─ ultralytics:  OpenCV → numpy frame → YOLO + BoT-SORT
+  └─ deepstream:   RTSP → NVDEC → nvinfer → NvTracker   (never leaves the GPU)
 ```
 
-- **`tracks_internally`** is read by `ModelRunner.load()`, which then skips
-  building a `Tracker`. Building one would re-track already-tracked boxes and
-  throw the pipeline's ids away. It is read through
-  `registry.tracks_internally(cfg)` rather than off the class, because it also
-  depends on config: DeepStream with `use_tracker: false` builds no `nvtracker`
-  at all and is then an ordinary detection-only backend.
-- **`shareable`** is read by `ModelRegistry.load_for_cameras()`, which then
-  gives the model a dedicated instance per camera. Tracking state is one reason
-  to be unshareable, but not the only one — a DeepStream pipeline negotiates
-  caps once for a single frame size, so a second camera at another resolution
-  could not use it whether or not tracking is on.
+`CameraPipeline` talks only to `CameraRuntime`. It opens the source, reads
+`(frame, detections)`, and does zones, rules, storage, alerts, health and
+collection — identical whichever runtime is feeding it, and with no knowledge
+of cameras or models.
 
-Both are answered from class attributes without constructing anything, so
-neither decision costs an SDK load.
+```
+core/model/detector/
+  base.py            Detector, CameraRuntime, SourceUnavailable
+  registry.py        build_detector(), build_camera_runtime()
+  ultralytics/
+    detector.py      UltralyticsDetector — infer(frame) -> boxes
+    runtime.py       OpenCV capture, feeding a shared ModelRunner
+  deepstream/
+    detector.py      DeepStreamDetections — metadata -> boxes
+    runtime.py       the GStreamer pipeline
+```
 
-Both backends route their raw integer ids through the same `StableIdMap`
-(`core/model/stable_id.py`), so every `track_id` reaching the database is a
-UUID regardless of which produced it.
+**Ultralytics keeps capture and detection apart.** `UltralyticsDetector` takes a
+frame and returns boxes, knowing nothing about cameras — which is what lets
+`ModelRegistry` load one model instance and share it across every camera using
+that `model_id`.
+
+**DeepStream cannot separate them, and that is not a shortcut.** `nvinfer` is an
+element inside the same pipeline that decoded the frame, so there is no point
+where a decoded frame exists in Python and has not yet been inferred. Splitting
+at that boundary would mean ending the pipeline early, pulling the frame to host
+memory, and pushing it back into a second pipeline for inference — GPU to host
+to GPU, which is the CPU decode and per-frame copy this design exists to remove.
+
+So `DeepStreamDetections` deliberately does not subclass `Detector`: that ABC is
+defined by `infer(frame)`, and here the input is metadata from a pipeline that
+has already run. An earlier version forced it into that shape and paid a decode
+and a copy per frame to hand over a frame nothing needed.
+
+The consequence to know: a runtime keeping frames on the GPU returns `None` for
+the frame, so the collector and the debug overlay have nothing to draw on for
+those cameras.
 
 ### Model formats
 

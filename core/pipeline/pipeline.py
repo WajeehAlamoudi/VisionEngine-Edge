@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
-
-import cv2
+from concurrent.futures import ThreadPoolExecutor
 
 from core.buffer import Buffer
 from core.collector import Collector
 from core.config import CameraConfig
 from core.ingest import IngestWorker
-from core.model import ModelRunner
 from core.notifier import Notifier
 from core.rules import RulesEngine
+from core.model.detector import CameraRuntime, SourceUnavailable
 from .enricher import enrich
 from .rows import _utcnow, detection_row, notification_row
 
@@ -25,13 +23,24 @@ log = logging.getLogger(__name__)
 # per interval.
 _FPS_LOG_INTERVAL = 10.0
 
+# Retry pacing after a read fails. Doubles per consecutive failure so a brief
+# network blip costs a second and a camera that has gone away is retried once a
+# minute instead of continuously.
+_RETRY_BASE_SECONDS = 2.0
+_RETRY_MAX_SECONDS = 60.0
+
 
 class CameraPipeline:
     """
     Per-camera processing loop.
 
-    Frame flow per inference cycle:
-      capture → fps throttle → inference (thread pool)
+    Video is not handled here. A CameraRuntime opens the source, paces it to
+    fps_target and returns detections; how it does that differs completely
+    between runtimes and is none of this loop's business. What remains is the
+    part that is identical for every camera on every runtime.
+
+    Per cycle:
+      camera runtime → detections (thread pool)
         → enrich (DetectionEvent) → rules filter+tag
         → detection row → notification row (if rule fires)
         → buffer write → ingest trigger
@@ -40,7 +49,7 @@ class CameraPipeline:
     def __init__(
             self,
             cam: CameraConfig,
-            runner: ModelRunner,
+            camera_runtime: CameraRuntime,
             buffer: Buffer,
             rules: RulesEngine,
             notifier: Notifier,
@@ -50,7 +59,7 @@ class CameraPipeline:
             collector=None,
     ) -> None:
         self._cam = cam
-        self._runner = runner
+        self._runtime = camera_runtime
         self._buffer = buffer
         self._rules = rules
         self._notifier = notifier
@@ -79,78 +88,70 @@ class CameraPipeline:
     def stop(self) -> None:
         self._stop.set()
 
-    @staticmethod
-    def _open_cap(source: str) -> tuple[cv2.VideoCapture, int, int]:
-        # TCP + discard-corrupt handles H.264, H.265, H.264+ (Hikvision/Dahua non-standard SPS)
-        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
-            "rtsp_transport;tcp"
-            "|fflags;+discardcorrupt+genpts"
-            "|probesize;50000000"
-            "|analyzeduration;50000000"
-        )
-        cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if not cap.isOpened():
-            return cap, 0, 0
-        # Decode until we get a valid frame — grab() alone won't recover a
-        # non-standard H.264+ stream with bad SPS headers.
-        w, h = 0, 0
-        for _ in range(120):
-            ret, frame = cap.read()
-            if ret and frame is not None and frame.size > 0:
-                h, w = frame.shape[:2]
-                break
-        if w == 0:
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        return cap, w, h
-
     async def run(self) -> None:
         loop = asyncio.get_event_loop()
-        frame_interval = 1.0 / self._cam.fps_target
 
         log.info(
             "camera '%s': starting  source=%s  fps_target=%d  model=%s",
             self._cam.id, self._cam.source, self._cam.fps_target, self._cam.model_id,
         )
 
-        cap, frame_w, frame_h = await loop.run_in_executor(None, self._open_cap, self._cam.source)
-        if not cap.isOpened():
-            self.last_error = f"failed to open source: {self._cam.source}"
-            log.error("camera '%s': %s", self._cam.id, self.last_error)
-            return
-
-        log.info("camera '%s': stream ready  %dx%d", self._cam.id, frame_w, frame_h)
-        last_inference = 0.0
-        self._last_report_at = time.time()
+        # A camera's own thread, not the default executor. read() blocks for as
+        # long as the fps_target interval, so a camera on the shared pool would
+        # hold one of its few threads continuously — with a handful of cameras
+        # that starves the collector's file writes and the health reporter.
+        # One thread each also keeps the promise that a stalled camera does not
+        # affect the others.
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"cam-{self._cam.id}")
 
         try:
+            try:
+                await loop.run_in_executor(executor, self._runtime.open)
+            except Exception as exc:
+                self.last_error = f"failed to open source: {exc}"
+                log.error("camera '%s': %s", self._cam.id, self.last_error)
+                # close() even though open() failed: it may have got far enough
+                # to hold something — a GStreamer pipeline can reach PLAYING and
+                # then time out waiting for video, and would otherwise keep the
+                # connection and the decoder session until the process exits.
+                await loop.run_in_executor(executor, self._runtime.close)
+                return
+
+            frame_w, frame_h = self._runtime.frame_size
+            log.info("camera '%s': stream ready  %dx%d", self._cam.id, frame_w, frame_h)
+            self._last_report_at = time.time()
+
+            consecutive_errors = 0
             while not self._stop.is_set():
-                cap_ts = _utcnow()
-                ret, frame = await loop.run_in_executor(None, cap.read)
-
-                if not ret:
-                    self.last_error = "frame read failed"
-                    log.warning("camera '%s': failed to read frame — retrying in 2s", self._cam.id)
-                    await asyncio.sleep(2.0)
-                    continue
-
-                now = time.time()
-                if now - last_inference < frame_interval:
-                    await asyncio.sleep(0)
-                    continue
-
-                last_inference = now
-                self.frames_processed += 1
-
                 try:
-                    results = await loop.run_in_executor(
-                        None, self._runner.run, frame, self._cam.classes
-                    )
-                except Exception as exc:
+                    frame, results = await loop.run_in_executor(
+                        executor, self._runtime.read)
+                except SourceUnavailable as exc:
+                    consecutive_errors += 1
                     self.last_error = str(exc)
-                    log.error("camera '%s': inference error: %s", self._cam.id, exc)
+                    delay = self._retry_delay(consecutive_errors)
+                    log.warning("camera '%s': %s — retrying in %.0fs",
+                                self._cam.id, exc, delay)
+                    await asyncio.sleep(delay)
                     continue
+                except Exception as exc:
+                    # An inference failure that repeats is usually permanent —
+                    # a dead pipeline returns instantly, so without a delay this
+                    # loop would spin at full speed logging every iteration.
+                    consecutive_errors += 1
+                    self.last_error = str(exc)
+                    delay = self._retry_delay(consecutive_errors)
+                    log.error("camera '%s': inference error: %s — retrying in %.0fs",
+                              self._cam.id, exc, delay)
+                    await asyncio.sleep(delay)
+                    continue
+
+                # Stamped after the read returns, not before it. read() absorbs
+                # the fps_target wait, so a timestamp taken beforehand would be
+                # up to one interval earlier than the frame it describes.
+                cap_ts = _utcnow()
+                consecutive_errors = 0
+                self.frames_processed += 1
 
                 log.debug(
                     "camera '%s': frame %d — %d detection(s): %s",
@@ -158,14 +159,28 @@ class CameraPipeline:
                     [(r.class_name, round(r.confidence, 2)) for r in results] if results else "none",
                 )
                 await self._process(results, cap_ts, frame_w, frame_h)
-                self._report_throughput(now)
+                self._report_throughput(time.time())
 
-                if self._collector:
+                # A runtime that keeps frames on the GPU returns None; there is
+                # nothing for the collector to save in that case.
+                if self._collector and frame is not None:
                     await self._collector.on_frame(self._cam.id, frame, results, cap_ts)
 
+            await loop.run_in_executor(executor, self._runtime.close)
         finally:
-            await loop.run_in_executor(None, cap.release)
+            executor.shutdown(wait=False)
             log.info("camera '%s': stopped", self._cam.id)
+
+    @staticmethod
+    def _retry_delay(consecutive_errors: int) -> float:
+        """
+        Back off as failures repeat, up to a ceiling.
+
+        A source that drops briefly should be retried quickly; one that is gone
+        should not be retried a thousand times a minute. The ceiling keeps a
+        camera that recovers hours later from being ignored.
+        """
+        return min(_RETRY_BASE_SECONDS * (2 ** (consecutive_errors - 1)), _RETRY_MAX_SECONDS)
 
     # ── per-frame processing ──────────────────────────────────────────────────
 

@@ -52,14 +52,22 @@ models:
   #   runtime     Which code path runs this model. This is the single choice
   #               that decides everything else about how it executes.
   #
-  #               ultralytics → Ultralytics/torch. Frames are captured with
-  #                             OpenCV and handed to the model one at a time.
-  #                             Runs on any of the accelerators below.
-  #               deepstream  → NVIDIA DeepStream. nvinfer for detection and,
-  #                             when use_tracker is on, nvtracker in the same
-  #                             GStreamer pipeline. NVIDIA hardware only, and
-  #                             needs the DeepStream SDK plus the pyds bindings
-  #                             installed. See "runtime: deepstream" below.
+  #               A runtime is a matched pair: how frames are captured, and how
+  #               the model runs on them. Each is built for the other, so the
+  #               capture is the one that suits that inference path rather than
+  #               a shared default.
+  #
+  #               ultralytics → OpenCV capture feeding an Ultralytics/torch
+  #                             model. Frames are decoded to host memory, which
+  #                             is what that model wants anyway. Runs on any of
+  #                             the accelerators below.
+  #               deepstream  → NVIDIA DeepStream. The camera is read by NVDEC
+  #                             and stays in GPU memory through nvinfer and,
+  #                             when use_tracker is on, nvtracker — one
+  #                             GStreamer pipeline, no copy to host. NVIDIA
+  #                             hardware only, and needs the DeepStream SDK
+  #                             plus the pyds bindings. See "runtime:
+  #                             deepstream" below.
   #
   #   accelerator The hardware the runtime executes on.
   #               auto     → detect best available at startup (recommended)

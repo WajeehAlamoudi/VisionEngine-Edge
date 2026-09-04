@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from core.config import CameraConfig, ModelConfig
-from .detector import is_shareable
+from core.config.model import needs_model_runner
 from .runner import ModelRunner
 
 log = logging.getLogger(__name__)
@@ -32,12 +32,15 @@ class ModelRegistry:
                     f"this should have been caught by config validation"
                 )
             model_cfg = models[cam.model_id]
-            # Sharing below is only safe for a stateless detector that can
-            # serve any camera. use_tracker covers tracker state; is_shareable
-            # covers backends unshareable for their own reasons — a DeepStream
-            # pipeline negotiates caps for one frame size and cannot take a
-            # second camera at another resolution, tracking or not.
-            if model_cfg.use_tracker or not is_shareable(model_cfg):
+            # Models whose runtime opens the camera itself run entirely in
+            # core/model/detector/ and never touch a ModelRunner, so building one
+            # would load an engine nothing would ever call.
+            if not needs_model_runner(model_cfg):
+                log.info("model '%s' runs in the %s camera runtime for camera '%s'",
+                         cam.model_id, model_cfg.runtime, cam.id)
+                continue
+
+            if model_cfg.use_tracker:
                 # tracker is stateful — each camera needs its own dedicated runner
                 runner = ModelRunner(model_cfg, use_tracker=True, tracker=model_cfg.tracker)
                 runner.load()
@@ -52,8 +55,9 @@ class ModelRegistry:
 
             self._runners[cam.id] = runner
 
-    def get(self, camera_id: str) -> ModelRunner:
-        return self._runners[camera_id]
+    def get(self, camera_id: str) -> ModelRunner | None:
+        """The runner for a camera, or None when its runtime supplies its own."""
+        return self._runners.get(camera_id)
 
     def close(self) -> None:
         """

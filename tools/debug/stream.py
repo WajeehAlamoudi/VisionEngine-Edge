@@ -74,8 +74,21 @@ class CameraStream:
 
         # Step 2: open cv2.VideoCapture for continuous read() calls.
         # Viewer and inference_viewer need this; zone_builder releases immediately.
+        #
+        # The variable is process-global and OpenCV reads it when the capture is
+        # constructed, so it is put back afterwards rather than left set. This
+        # tool opens one camera at a time and needs no lock for it, unlike the
+        # runtime in core/model/detector/ultralytics/, which opens several
+        # concurrently.
+        previous = os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS")
         os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = _RTSP_CV2_OPTIONS
-        self._cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+        try:
+            self._cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+        finally:
+            if previous is None:
+                os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+            else:
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = previous
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self._cap.isOpened():
             log.warning("continuous capture unavailable — first_frame still valid")

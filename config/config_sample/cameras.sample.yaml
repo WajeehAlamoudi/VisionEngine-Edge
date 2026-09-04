@@ -65,7 +65,7 @@ cameras:
   #               Evaluated top-to-bottom — first matching entry wins.
   #               Each entry has:
   #                 classes     list of class names this entry handles
-  #                             classes: []  means ALL classes (universal convention — see below)
+  #                             classes: "*" means ALL classes (universal convention — see below)
   #                             placed last, it naturally covers anything not matched above
   #                 raw_table   table to write matching detections into
   #
@@ -81,7 +81,7 @@ cameras:
   #               - Use raw_table OR routing — not both on the same camera
   #               - Every active class should be covered — unmatched detections are
   #                 logged as a warning and skipped
-  #               - Add a classes: [] entry last to ensure nothing is silently dropped
+  #               - Add a classes: "*" entry last to ensure nothing is silently dropped
   #               - Startup validation warns if any active class has no routing entry
   #
   #               Example — person and vehicles to separate tables:
@@ -90,7 +90,7 @@ cameras:
   #                     raw_table: "person_detections"
   #                   - classes: [car, truck]
   #                     raw_table: "vehicle_detections"
-  #                   - classes: []             # all remaining classes → default table
+  #                   - classes: "*"            # all remaining classes → default table
   #                     raw_table: "detections"
   #
   # ── zones ─────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import yaml
 from boxmot.trackers.bbox.botsort import BotSort
 
 from core.config import ModelConfig
-from ..device import _resolve_device
+from ..accelerator import resolve_accelerator
 from ..stable_id import StableIdMap
 from ..types import InferenceResult
 from .base import Tracker
@@ -154,13 +154,13 @@ class BoxMotTracker(Tracker):
         ReID on cpu or cuda.
         """
         if requested == "auto":
-            detector_device = _resolve_device(self._cfg.accelerator)
-            if detector_device in _TORCH_DEVICES:
-                return torch.device(detector_device)
+            detector_accelerator = resolve_accelerator(self._cfg.accelerator)
+            if detector_accelerator in _TORCH_DEVICES:
+                return torch.device(detector_accelerator)
             log.warning(
-                "tracker '%s': detector device '%s' is not a torch device - "
-                "running ReID on cpu. Set reid_device explicitly to override.",
-                self._cfg.id, detector_device,
+                "tracker '%s': accelerator '%s' is not a torch device - running "
+                "ReID on cpu. Set reid_device explicitly to override.",
+                self._cfg.id, detector_accelerator,
             )
             return torch.device("cpu")
 
@@ -201,7 +201,7 @@ class BoxMotTracker(Tracker):
         use_half = half and device.type == "cuda"
         if half and not use_half:
             log.info(
-                "tracker '%s': reid_half ignored - no benefit on device=%s",
+                "tracker '%s': reid_half ignored - no benefit on reid device %s",
                 self._cfg.id, device,
             )
 

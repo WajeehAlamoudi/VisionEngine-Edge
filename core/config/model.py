@@ -14,11 +14,17 @@ _MODEL_KEYS = (
     "use_tracker", "tracker", "half", "ds_infer_config",
 )
 
-# Which code path runs the model. Must stay in sync with _BACKENDS in
-# core/model/detector/registry.py, where each of these names IS the backend.
-# Duplicated rather than imported because that module pulls in ultralytics and
-# torch at import time, and config validation must stay free of heavy deps.
+# Which code path runs the model. Must stay in sync with the packages under
+# core/model/detector/, one per runtime. Not every name appears in _DETECTORS
+# there: a runtime that opens the camera itself has no Detector at all, only a
+# CameraRuntime. Duplicated rather than imported because those modules reach
+# their SDKs, and config validation must stay free of heavy deps.
 RUNTIMES = ("ultralytics", "deepstream")
+
+# Runtimes that open the camera themselves, running detection and tracking in
+# one pipeline of their own (see core/model/detector/). A model on one of these
+# never reaches the shared model layer, so ModelRegistry builds it no runner.
+SELF_CAPTURING_RUNTIMES = ("deepstream",)
 
 # Which hardware the runtime executes on.
 ACCELERATORS = ("auto", "cpu", "cuda", "mps", "coreml")
@@ -29,12 +35,6 @@ _RUNTIME_ACCELERATORS: dict[str, tuple[str, ...]] = {
     "ultralytics": ("auto", "cpu", "cuda", "mps", "coreml"),
     "deepstream":  ("cuda",),
 }
-
-# Runtimes whose backend assigns track_id inside the detector rather than
-# through the tracker/ layer. Kept here so config validation can reason about
-# tracking without importing the backends. Must stay in sync with the
-# tracks_internally flags in core/model/detector/.
-_INTERNAL_TRACKING_RUNTIMES = ("deepstream",)
 
 # Which accelerators each (runtime, weight format) pair can actually run on.
 # Keyed by both because the same extension means different things to different
@@ -90,10 +90,21 @@ class ModelConfig:
                               # nvtracker config, which also chooses the algorithm
     half: bool               # FP16 inference — only applied when the accelerator
                               # resolves to cuda; ignored on cpu/mps, where it gives
-                              # no benefit (see device.py)
+                              # no benefit (see accelerator.py)
     ds_infer_config: str | None = None
                              # nvinfer config file. Required for runtime: deepstream,
                              # meaningless for every other runtime.
+
+
+def needs_model_runner(model: "ModelConfig") -> bool:
+    """
+    Whether this model is executed through the shared model layer.
+
+    False for a runtime that owns its own capture and inference. Answered from
+    config alone so neither the model layer nor the runtime layer has to import
+    the other to find out.
+    """
+    return model.runtime not in SELF_CAPTURING_RUNTIMES
 
 
 def _check_format(r: Reader, path_value: str, runtime: str, accelerator: str) -> None:

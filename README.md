@@ -56,12 +56,10 @@ This README is the front door. The full guides live in **[`docs/`](docs/)**.
                     ┌─────────────────────────────────────────────────────┐
                     │                  EDGE DEVICE                        │
                     │                                                     │
-  Camera Stream ───►│  cap.read()  ── timestamped here                    │
-  USB / RTSP        │      │                                              │
-                    │   FPS throttle                                      │
-                    │      │                                              │
-                    │   ModelRunner.run()          BoT-SORT + OSNet ReID  │
-                    │   detector backend      ◄──  (optional, per model)  │
+  Camera Stream ───►│  CameraRuntime.read()  ── timestamped here          │
+  USB / RTSP        │      capture + inference, matched to each other:    │
+                    │      OpenCV → YOLO + BoT-SORT, or                   │
+                    │      NVDEC → nvinfer → NvTracker (stays on the GPU) │
                     │      │                                              │
                     │   enrich()                                          │
                     │   zone tag · anchor · normalize                     │
@@ -287,7 +285,9 @@ VisionEngine-Edge/
 │   ├── config/                 ← strict YAML parsers + cross-file validation + AppConfig
 │   ├── pipeline/               ← per-camera loop, enrichment, row builders
 │   ├── model/
-│   │   ├── detector/           ← Ultralytics and DeepStream backends + registry
+│   │   ├── detector/           ← one package per runtime + the registry
+│   │   │   ├── ultralytics/    ← YOLO detector + OpenCV capture
+│   │   │   └── deepstream/     ← nvinfer parsing + the GStreamer pipeline
 │   │   └── tracker/            ← BoT-SORT via boxmot, ReID backend selection
 │   ├── zone/                   ← point-in-polygon zone assignment
 │   ├── rules/                  ← RulesEngine + DetectionEvent + RuleMatch

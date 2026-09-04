@@ -132,9 +132,18 @@ frame-wide zone must be last.
 ### `inference` mode
 
 Runs the real configured model on the live stream with an overlay — boxes,
-class names, confidences, zones, and measured inference FPS. It uses the actual
-`ModelRunner`, including the tracker when `use_tracker: true`, so what you see
-is what the pipeline sees.
+class names, confidences, zones, and measured inference FPS.
+
+It builds the **same camera runtime `main.py` builds**, so the capture path is
+the real one too: OpenCV for `runtime: ultralytics`, NVDEC for `runtime:
+deepstream`. Tracking is included whenever `use_tracker: true`. What you see is
+what the pipeline sees.
+
+One limit follows from that. A runtime that keeps frames on the GPU returns no
+frame to draw on, so this mode reports that and exits for a `deepstream`
+camera. `view` and `zones` below are unaffected — they open the stream with
+OpenCV directly and never load a model, so they work on any camera regardless
+of its runtime.
 
 ```bash
 python3 tools/debug.py --mode inference --camera cam-01 --config config/
