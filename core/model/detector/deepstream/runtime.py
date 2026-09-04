@@ -192,27 +192,69 @@ class DeepStreamCameraRuntime(CameraRuntime):
         # How many source frames to keep one of, applied by the decoder. 1 means
         # keep everything. Set once the source's frame rate is known.
         self._drop_interval = 1
+        # The remainder the decoder's whole-number interval cannot express,
+        # applied by a probe on the decoded pad. Both are set in open().
+        self._gate_target = 0      # frames wanted per _gate_source frames
+        self._gate_source = 0
+        self._gate_credit = 0
         self._last_read = 0.0
 
-    def _frames_to_keep(self, source_fps: float) -> int:
+    def _plan_rate(self, source_fps: float) -> None:
         """
-        Turn fps_target into nvurisrcbin's drop-frame-interval.
+        Work out how to get from the source's frame rate down to fps_target.
 
-        The decoder keeps one frame in every N and discards the rest before
-        touching them, so nothing downstream — NVDEC, the muxer, nvinfer, the
-        tracker — does any work for a frame that was never going to be used.
-        Dropping after inference, which is what a wait in read() amounts to,
-        saves nothing at all.
+        Two gates, because one cannot do it alone.
 
-        N is a whole number, so the result lands on or above fps_target rather
-        than exactly on it: 25 fps asked to give 15 keeps every frame, asked to
-        give 12 keeps every second one. Rounding the other way would quietly
-        deliver less than was asked for.
+        The decoder's drop-frame-interval is a whole number — keep one frame in
+        N — and that is not a limitation of the property but of the video: a
+        P-frame is a delta from the frames before it, so an arbitrary encoded
+        frame cannot be discarded without corrupting the ones that follow. Only
+        whole-number decimation is safe before decoding.
+
+        Whatever ratio that leaves is handled by a probe on the decoded pad,
+        which can drop any frame it likes. That is after NVDEC but before the
+        muxer, so a frame dropped there still costs no scaling, no inference
+        and no tracking — all the GPU work worth saving.
+
+        25 fps down to 15 is the case that needs both: 25/15 is not a whole
+        number, so the decoder keeps everything and the probe passes 3 of every
+        5. At 30 down to 15 the decoder does it alone and the probe passes
+        everything.
         """
         target = self._cam.fps_target
         if not target or not source_fps or source_fps <= target:
-            return 1
-        return max(1, int(source_fps // target))
+            self._drop_interval = 1
+            self._gate_target = self._gate_source = 0
+            return
+
+        # Whole-number part, free because it happens before decoding.
+        self._drop_interval = max(1, int(source_fps // target))
+        decoded_fps = source_fps / self._drop_interval
+
+        if decoded_fps <= target + 0.01:
+            self._gate_target = self._gate_source = 0
+            return
+
+        # The remainder, as a ratio the probe can apply exactly.
+        self._gate_target = int(round(target * 100))
+        self._gate_source = int(round(decoded_fps * 100))
+        self._gate_credit = 0
+
+    def _rate_gate(self, _pad, _info) -> object:
+        """
+        Pass fps_target frames out of every source frame, exactly.
+
+        A running credit rather than a counter, so the kept frames are spread
+        evenly instead of arriving in a burst followed by a gap — 3 of every 5
+        comes out as keep, drop, keep, drop, keep, which is what a tracker
+        wants from its input.
+        """
+        Gst = self._gst
+        self._gate_credit += self._gate_target
+        if self._gate_credit >= self._gate_source:
+            self._gate_credit -= self._gate_source
+            return Gst.PadProbeReturn.OK
+        return Gst.PadProbeReturn.DROP
 
     @property
     def _tracking(self) -> bool:
@@ -240,9 +282,18 @@ class DeepStreamCameraRuntime(CameraRuntime):
         probe_target = uri if not uri.startswith("file://") else str(self._cam.source)
         width, height, source_fps = _probe_source(probe_target)
         self._size = (width, height)
-        self._drop_interval = self._frames_to_keep(source_fps)
+        self._plan_rate(source_fps)
         log.info("camera '%s': source is %dx%d @ %s fps", self._cam.id, width, height,
                  f"{source_fps:.0f}" if source_fps else "unknown")
+        if source_fps and self._cam.fps_target:
+            kept = source_fps / self._drop_interval
+            if self._gate_source:
+                kept = kept * self._gate_target / self._gate_source
+            log.info("camera '%s': rate gate — decoder keeps 1 in %d, probe passes "
+                     "%s, so %.1f fps reach nvinfer (target %d)",
+                     self._cam.id, self._drop_interval,
+                     f"{self._gate_target}/{self._gate_source}" if self._gate_source else "all",
+                     kept, self._cam.fps_target)
 
         Gst = self._gst
         self._pipeline = self._build()
@@ -465,6 +516,11 @@ class DeepStreamCameraRuntime(CameraRuntime):
             self._link_error = "could not obtain an nvstreammux sink pad"
             log.error("camera '%s': %s", self._cam.id, self._link_error)
             return
+
+        # Ahead of the link, so a dropped frame never reaches nvstreammux and
+        # therefore never reaches nvinfer or the tracker.
+        if self._gate_source:
+            pad.add_probe(self._gst.PadProbeType.BUFFER, self._rate_gate)
 
         if pad.link(sink_pad) != self._gst.PadLinkReturn.OK:
             self._link_error = "failed to link the source into nvstreammux"
