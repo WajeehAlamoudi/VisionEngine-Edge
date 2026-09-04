@@ -33,6 +33,44 @@ _PULL_TIMEOUT_NS = 5 * 1_000_000_000
 _OPEN_TIMEOUT_S = 60.0
 
 
+def _probe_frame_size(source: str) -> tuple[int, int]:
+    """
+    Read the stream's resolution before the DeepStream pipeline is built.
+
+    nvstreammux validates its width and height during the state change, which
+    happens before nvurisrcbin has connected and produced a pad — so the size
+    cannot be discovered from the source and applied afterwards. NVIDIA's own
+    sample apps set it to a hardcoded value for the same reason.
+
+    It has to be the source's real size rather than anything else: the muxer
+    scales every stream to it, so the boxes come back in that space, and the
+    zone polygons in cameras.yaml are drawn in source pixels.
+
+    Opened with OpenCV because that code is already here and proven against
+    these cameras. It costs one connection and one decoded frame, once, at
+    startup — not per frame, which is the cost this runtime exists to avoid.
+    """
+    import cv2
+
+    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    try:
+        if not cap.isOpened():
+            raise RuntimeError(f"cannot open {source} to read its resolution")
+        # Decode rather than trusting the reported properties: a stream with
+        # non-standard SPS headers reports zeros until a frame arrives.
+        for _ in range(120):
+            ok, frame = cap.read()
+            if ok and frame is not None and frame.size > 0:
+                return frame.shape[1], frame.shape[0]
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width > 0 and height > 0:
+            return width, height
+        raise RuntimeError(f"no frame from {source} — cannot determine its resolution")
+    finally:
+        cap.release()
+
+
 def _has_property(element, name: str) -> bool:
     """Whether a GStreamer element exposes a property, without raising."""
     return element.find_property(name) is not None
@@ -119,8 +157,14 @@ class DeepStreamCameraRuntime(CameraRuntime):
         # Before anything is built, so an unusable source fails with its own
         # message rather than as a pipeline that never produces a frame.
         self._check_prerequisites()
-        self._source_uri()
+        uri = self._source_uri()
         self._detections.load_labels()
+
+        # Before the pipeline exists: nvstreammux needs its output size at
+        # build time, not once the source has connected.
+        self._size = _probe_frame_size(uri if not uri.startswith("file://")
+                                       else str(self._cam.source))
+        log.info("camera '%s': source is %dx%d", self._cam.id, *self._size)
 
         Gst = self._gst
         self._pipeline = self._build()
@@ -227,6 +271,11 @@ class DeepStreamCameraRuntime(CameraRuntime):
         streammux.set_property("batch-size", 1)
         streammux.set_property("live-source", 1)
         streammux.set_property("batched-push-timeout", 40000)
+        # Set here, before the state change that validates them. Every source is
+        # scaled to this, so it is the camera's own resolution — that keeps the
+        # boxes in the coordinate space the zone polygons are drawn in.
+        streammux.set_property("width", self._size[0])
+        streammux.set_property("height", self._size[1])
 
         # Order matters: parsing config-file-path resets nvinfer's properties,
         # so the engine override has to follow it to stick. models.yaml `path`
@@ -286,40 +335,20 @@ class DeepStreamCameraRuntime(CameraRuntime):
 
     def _on_pad_added(self, _element, pad, streammux) -> None:
         """
-        Link the source once it knows what it is carrying.
+        Link the source once it has connected and knows what it is carrying.
 
-        The source resolution arrives with this pad, which is why nvstreammux
-        is sized here: it scales every stream to its own width and height, so
-        setting it to the camera's native size is what keeps the boxes coming
-        back in the coordinate space zones and rules already expect.
+        Only linking happens here. The frame size was settled before the
+        pipeline was built, because nvstreammux will not leave NULL without it.
         """
         caps = pad.get_current_caps() or pad.query_caps(None)
-        name = caps.to_string()
-        if not name.startswith("video"):
+        if not caps.to_string().startswith("video"):
             return
-
-        structure = caps.get_structure(0)
-        ok_w, width = structure.get_int("width")
-        ok_h, height = structure.get_int("height")
-        if not (ok_w and ok_h) or width <= 0 or height <= 0:
-            # Without dimensions the muxer keeps its default size and every box
-            # would be clamped against 0x0 downstream — detections would vanish
-            # with nothing reported. Better to leave _linked unset and let
-            # open() time out with a message.
-            self._link_error = (f"source caps carried no frame size ({name}) — "
-                                f"cannot size nvstreammux")
-            log.error("camera '%s': %s", self._cam.id, self._link_error)
-            return
-
-        self._size = (width, height)
-        streammux.set_property("width", width)
-        streammux.set_property("height", height)
 
         # get_request_pad was deprecated in GStreamer 1.20 for
-        # request_pad_simple. Resolved by attribute, and checked for None: a
+        # request_pad_simple. Resolved by attribute and checked for None: a
         # missing method would raise inside this callback, where PyGObject
-        # swallows the exception and open() would hang until its timeout with a
-        # misleading message.
+        # swallows the exception, and open() would then wait out its timeout
+        # with no idea why.
         request = (getattr(streammux, "request_pad_simple", None)
                    or getattr(streammux, "get_request_pad", None))
         if request is None:
