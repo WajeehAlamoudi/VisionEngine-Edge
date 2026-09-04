@@ -34,6 +34,11 @@ _UNTRACKED = (1 << 64) - 1
 # How long to wait for a processed buffer before giving up on a frame.
 _PULL_TIMEOUT_NS = 5 * 1_000_000_000
 
+# How long to wait for the pipeline to finish reaching PLAYING. Generous: the
+# first transition builds or deserialises the TensorRT engines, which on a
+# Jetson takes seconds even when they are already on disk.
+_START_TIMEOUT_NS = 60 * 1_000_000_000
+
 
 def _import_gst():
     """
@@ -132,10 +137,16 @@ class DeepStreamDetector(Detector):
         self._idx_to_name = self._load_label_names(self._cfg.ds_infer_config)
         self._pipeline = self._build()
         self._bus = self._pipeline.get_bus()
-        self._start()
+
+        # Deliberately NOT started here. appsrc's caps and nvstreammux's width
+        # and height come from the first frame, and GStreamer cannot negotiate
+        # a pipeline whose source format is still unknown — asking for PLAYING
+        # now returns a plain state-change failure with no useful message.
+        # _configure_caps starts it once the frame size is known.
 
         log.info(
-            "detector '%s' ready — DeepStream nvinfer(%s), tracking %s, %d classes",
+            "detector '%s' built — DeepStream nvinfer(%s), tracking %s, %d classes; "
+            "starting on first frame",
             self._cfg.id, self._cfg.ds_infer_config,
             f"via nvtracker({self._cfg.tracker})" if self._tracking else "off",
             len(self._idx_to_name),
@@ -162,11 +173,30 @@ class DeepStreamDetector(Detector):
             )
 
     def _start(self) -> None:
+        """
+        Bring the pipeline up. Called once, from _configure_caps, because it
+        cannot succeed before the frame format is known.
+        """
         Gst = self._gst
         if self._pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+            # The bus usually carries a specific reason; a bare state-change
+            # failure says only that something refused, not what.
+            self._check_bus()
             raise RuntimeError(
                 f"detector '{self._cfg.id}': pipeline refused to start. Run with "
-                f"GST_DEBUG=2 to see which element failed."
+                f"GST_DEBUG=3 to see which element failed."
+            )
+
+        # PLAYING is asynchronous for a live source: the call above returns
+        # ASYNC and the elements are still negotiating. Waiting here means the
+        # first push meets a pipeline that is actually ready, instead of one
+        # that silently drops the frame.
+        state_change, _, _ = self._pipeline.get_state(_START_TIMEOUT_NS)
+        if state_change == Gst.StateChangeReturn.FAILURE:
+            self._check_bus()
+            raise RuntimeError(
+                f"detector '{self._cfg.id}': pipeline failed while reaching "
+                f"PLAYING. Run with GST_DEBUG=3 for the failing element."
             )
 
     # ── pipeline construction ─────────────────────────────────────────────────
@@ -438,8 +468,12 @@ class DeepStreamDetector(Detector):
         self._streammux.set_property("height", height)
         self._frame_size = (width, height)
         self._caps_set = True
-        log.info("detector '%s': pipeline configured for %dx%d frames",
+        log.info("detector '%s': pipeline configured for %dx%d frames — starting",
                  self._cfg.id, width, height)
+
+        # Only now can the pipeline negotiate: appsrc knows its format and the
+        # muxer its output size.
+        self._start()
 
     # ── reading DeepStream metadata ───────────────────────────────────────────
 
