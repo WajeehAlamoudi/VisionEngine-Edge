@@ -71,6 +71,44 @@ def _probe_frame_size(source: str) -> tuple[int, int]:
         cap.release()
 
 
+def _describe_tracker(path: str) -> str:
+    """
+    Name the algorithm an nvtracker config actually selects.
+
+    The file decides which of DeepStream's trackers runs, but nothing in its
+    name has to say so — every one of them is valid under any filename. Two
+    sections settle it: VisualTracker turns on NvDCF's correlation filter, and
+    ReID turns on an appearance network. Reported at startup so the log says
+    what is running rather than only which file was read.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return "unknown (config unreadable)"
+
+    def flag(name: str) -> int:
+        for line in text.splitlines():
+            line = line.split("#")[0].strip()
+            if line.startswith(f"{name}:"):
+                value = line.partition(":")[2].strip()
+                return int(value) if value.lstrip("-").isdigit() else 0
+        return 0
+
+    dcf = flag("visualTrackerType") == 1
+    reid = flag("reidType") == 1
+    motion = flag("stateEstimatorType") > 0
+
+    if dcf and reid:
+        return "NvDCF + ReID (correlation filter and an appearance network)"
+    if dcf:
+        return "NvDCF (correlation filter, no ReID network)"
+    if reid:
+        return "NvDeepSORT (appearance network, no correlation filter)"
+    if motion:
+        return "NvSORT (motion only)"
+    return "IOU (overlap only)"
+
+
 def _has_property(element, name: str) -> bool:
     """Whether a GStreamer element exposes a property, without raising."""
     return element.find_property(name) is not None
@@ -196,11 +234,15 @@ class DeepStreamCameraRuntime(CameraRuntime):
             raise RuntimeError("pipeline failed while reaching PLAYING")
 
         log.info(
-            "camera '%s': DeepStream ready — nvinfer(%s), tracking %s, %d classes",
-            self._cam.id, self._model.ds_infer_config,
-            f"via nvtracker({self._model.tracker})" if self._tracking else "off",
-            self._detections.class_count,
+            "camera '%s': DeepStream ready — %d classes, model %s",
+            self._cam.id, self._detections.class_count, self._model.path,
         )
+        if self._tracking:
+            log.info("camera '%s': tracker is %s  [%s]",
+                     self._cam.id, _describe_tracker(self._model.tracker),
+                     self._model.tracker)
+        else:
+            log.info("camera '%s': tracking off (use_tracker: false)", self._cam.id)
 
     def _source_uri(self) -> str:
         """
