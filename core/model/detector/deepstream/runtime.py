@@ -33,9 +33,9 @@ _PULL_TIMEOUT_NS = 5 * 1_000_000_000
 _OPEN_TIMEOUT_S = 60.0
 
 
-def _probe_frame_size(source: str) -> tuple[int, int]:
+def _probe_source(source: str) -> tuple[int, int, float]:
     """
-    Read the stream's resolution before the DeepStream pipeline is built.
+    Read the stream's resolution and frame rate before the pipeline is built.
 
     nvstreammux validates its width and height during the state change, which
     happens before nvurisrcbin has connected and produced a pad — so the size
@@ -45,6 +45,10 @@ def _probe_frame_size(source: str) -> tuple[int, int]:
     It has to be the source's real size rather than anything else: the muxer
     scales every stream to it, so the boxes come back in that space, and the
     zone polygons in cameras.yaml are drawn in source pixels.
+
+    The frame rate matters as much as the size: it is what turns the camera's
+    fps_target into a number of frames to drop, and dropping them before the
+    decoder is the only place the work is genuinely saved.
 
     Opened with OpenCV because that code is already here and proven against
     these cameras. It costs one connection and one decoded frame, once, at
@@ -56,16 +60,22 @@ def _probe_frame_size(source: str) -> tuple[int, int]:
     try:
         if not cap.isOpened():
             raise RuntimeError(f"cannot open {source} to read its resolution")
-        # Decode rather than trusting the reported properties: a stream with
+
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        if not (0.0 < fps <= 240.0):
+            fps = 0.0        # unreported or nonsense; caller falls back
+
+        # Decode rather than trusting the reported size: a stream with
         # non-standard SPS headers reports zeros until a frame arrives.
         for _ in range(120):
             ok, frame = cap.read()
             if ok and frame is not None and frame.size > 0:
-                return frame.shape[1], frame.shape[0]
+                return frame.shape[1], frame.shape[0], fps
+
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         if width > 0 and height > 0:
-            return width, height
+            return width, height, fps
         raise RuntimeError(f"no frame from {source} — cannot determine its resolution")
     finally:
         cap.release()
@@ -179,8 +189,30 @@ class DeepStreamCameraRuntime(CameraRuntime):
         self._detections = DeepStreamDetections(model, cam.classes)
         self._failed: str | None = None
 
-        self._frame_interval = 1.0 / cam.fps_target if cam.fps_target else 0.0
+        # How many source frames to keep one of, applied by the decoder. 1 means
+        # keep everything. Set once the source's frame rate is known.
+        self._drop_interval = 1
         self._last_read = 0.0
+
+    def _frames_to_keep(self, source_fps: float) -> int:
+        """
+        Turn fps_target into nvurisrcbin's drop-frame-interval.
+
+        The decoder keeps one frame in every N and discards the rest before
+        touching them, so nothing downstream — NVDEC, the muxer, nvinfer, the
+        tracker — does any work for a frame that was never going to be used.
+        Dropping after inference, which is what a wait in read() amounts to,
+        saves nothing at all.
+
+        N is a whole number, so the result lands on or above fps_target rather
+        than exactly on it: 25 fps asked to give 15 keeps every frame, asked to
+        give 12 keeps every second one. Rounding the other way would quietly
+        deliver less than was asked for.
+        """
+        target = self._cam.fps_target
+        if not target or not source_fps or source_fps <= target:
+            return 1
+        return max(1, int(source_fps // target))
 
     @property
     def _tracking(self) -> bool:
@@ -205,9 +237,12 @@ class DeepStreamCameraRuntime(CameraRuntime):
 
         # Before the pipeline exists: nvstreammux needs its output size at
         # build time, not once the source has connected.
-        self._size = _probe_frame_size(uri if not uri.startswith("file://")
-                                       else str(self._cam.source))
-        log.info("camera '%s': source is %dx%d", self._cam.id, *self._size)
+        probe_target = uri if not uri.startswith("file://") else str(self._cam.source)
+        width, height, source_fps = _probe_source(probe_target)
+        self._size = (width, height)
+        self._drop_interval = self._frames_to_keep(source_fps)
+        log.info("camera '%s': source is %dx%d @ %s fps", self._cam.id, width, height,
+                 f"{source_fps:.0f}" if source_fps else "unknown")
 
         Gst = self._gst
         self._pipeline = self._build()
@@ -307,6 +342,13 @@ class DeepStreamCameraRuntime(CameraRuntime):
         tracker = make("nvtracker") if self._tracking else None
 
         source.set_property("uri", self._source_uri())
+        # Drop to fps_target here, ahead of the decoder, so the frames that are
+        # not wanted cost nothing anywhere downstream.
+        if self._drop_interval > 1 and _has_property(source, "drop-frame-interval"):
+            source.set_property("drop-frame-interval", self._drop_interval)
+            log.info("camera '%s': keeping 1 frame in %d before decode "
+                     "(fps_target %d)", self._cam.id, self._drop_interval,
+                     self._cam.fps_target)
         # Reconnect rather than ending the stream when the camera drops. Without
         # it a brief network blip terminates the pipeline permanently.
         if source.find_property("rtsp-reconnect-interval"):
@@ -450,11 +492,9 @@ class DeepStreamCameraRuntime(CameraRuntime):
         if self._pipeline is None:
             raise RuntimeError("read() before open()")
 
-        if self._frame_interval:
-            wait = self._last_read + self._frame_interval - time.time()
-            if wait > 0:
-                time.sleep(wait)
-
+        # No wait here. The decoder is already delivering at fps_target, so
+        # this blocks on the next frame the pipeline actually produced rather
+        # than sleeping through work it has already done.
         self._check_bus()
         sample = self._appsink.emit("try-pull-sample", _PULL_TIMEOUT_NS)
         if sample is None:
