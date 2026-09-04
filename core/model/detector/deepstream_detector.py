@@ -40,6 +40,11 @@ _PULL_TIMEOUT_NS = 5 * 1_000_000_000
 _START_TIMEOUT_NS = 60 * 1_000_000_000
 
 
+def _has_property(element, name: str) -> bool:
+    """Whether a GStreamer element exposes a property, without raising."""
+    return element.find_property(name) is not None
+
+
 def _import_gst():
     """
     Import GStreamer and initialise it once for the process.
@@ -111,6 +116,10 @@ class DeepStreamDetector(Detector):
         self._bus = None
 
         self._caps_set = False
+        # Set once the pipeline reports an error or EOS. A GStreamer pipeline
+        # does not recover from either on its own, so every later frame would
+        # otherwise fail identically, once per frame, forever.
+        self._failed: str | None = None
         self._frame_size: tuple[int, int] = (0, 0)   # (width, height)
         self._ids = StableIdMap()
         # class_id -> name, read from the label file nvinfer is configured with
@@ -262,6 +271,20 @@ class DeepStreamDetector(Detector):
             "caps", Gst.Caps.from_string("video/x-raw(memory:NVMM), format=RGBA")
         )
 
+        # Force the conversion onto the GPU. On Jetson nvvideoconvert defaults
+        # to the VIC, a fixed-function block that cannot convert RGB or BGR:
+        # frames flow for a while and then it fails with "RGB/BGR Format
+        # transformation is not supported by VIC use GPU instead", taking the
+        # whole pipeline down with an EOS. Frames arrive here as BGR from
+        # OpenCV, so the VIC is never the right unit for this stage.
+        # 1 = GPU. Guarded because the property does not exist on dGPU builds,
+        # where the VIC does not exist either and the default is already GPU.
+        if _has_property(el["nvvideoconvert"], "compute-hw"):
+            el["nvvideoconvert"].set_property("compute-hw", 1)
+        else:
+            log.debug("detector '%s': nvvideoconvert has no compute-hw property",
+                      self._cfg.id)
+
         # batch-size stays 1: one pipeline per camera, because this backend is
         # not shareable and ModelRegistry gives each camera its own instance.
         el["streammux"].set_property("batch-size", 1)
@@ -412,6 +435,14 @@ class DeepStreamDetector(Detector):
         if self._pipeline is None:
             raise RuntimeError(f"detector '{self._cfg.id}': infer() called before load()")
 
+        if self._failed:
+            # Same message every frame, but an honest one: the pipeline is gone
+            # and will not come back without a restart.
+            raise RuntimeError(
+                f"detector '{self._cfg.id}': pipeline is stopped and cannot "
+                f"recover — {self._failed}. Restart the service."
+            )
+
         active = set(active_classes) if active_classes else None
         height, width = frame.shape[:2]
 
@@ -433,12 +464,15 @@ class DeepStreamDetector(Detector):
     def _pull(self):
         sample = self._appsink.emit("try-pull-sample", _PULL_TIMEOUT_NS)
         if sample is None:
-            # Re-check the bus first: a pipeline error is the usual cause, and
-            # it gives a far better message than the timeout does.
+            # Check the bus first. A dead pipeline returns here immediately
+            # rather than after the timeout, so reporting a timeout would be
+            # both wrong and useless — the bus has the real reason.
             self._check_bus()
+            self._failed = "the pipeline produced no output and reported no error"
             raise RuntimeError(
-                f"detector '{self._cfg.id}': no output within "
-                f"{_PULL_TIMEOUT_NS / 1e9:.0f}s — the pipeline has stalled"
+                f"detector '{self._cfg.id}': no output from the pipeline "
+                f"(waited up to {_PULL_TIMEOUT_NS / 1e9:.0f}s) and the bus is "
+                f"silent — appsink returned nothing"
             )
         return sample
 
@@ -575,15 +609,26 @@ class DeepStreamDetector(Detector):
         Gst = self._gst
         while True:
             message = self._bus.pop_filtered(
-                Gst.MessageType.ERROR | Gst.MessageType.WARNING)
+                Gst.MessageType.ERROR | Gst.MessageType.WARNING | Gst.MessageType.EOS)
             if message is None:
                 return
+
+            if message.type == Gst.MessageType.EOS:
+                # End of stream on a live appsrc means an element downstream
+                # tore the pipeline down. Nothing will flow again.
+                self._failed = "the pipeline reached end-of-stream"
+                raise RuntimeError(
+                    f"detector '{self._cfg.id}': {self._failed}"
+                )
+
             if message.type == Gst.MessageType.ERROR:
                 err, debug = message.parse_error()
+                self._failed = f"{message.src.get_name()}: {err}"
                 raise RuntimeError(
                     f"detector '{self._cfg.id}': pipeline error from "
                     f"{message.src.get_name()}: {err} ({debug})"
                 )
+
             err, _ = message.parse_warning()
             log.warning("detector '%s': %s: %s",
                         self._cfg.id, message.src.get_name(), err)
