@@ -309,6 +309,12 @@ class DeepStreamDetector(Detector):
             tracker.set_property("ll-config-file", self._cfg.tracker)
             tracker.set_property("tracker-width", _TRACKER_W)
             tracker.set_property("tracker-height", _TRACKER_H)
+            # Same reason as nvvideoconvert above: the VIC cannot handle the
+            # RGB/BGR crops the tracker scales for ReID, and it announces the
+            # fallback by silently raising the minimum object size to 16x16.
+            # 1 = GPU.
+            if _has_property(tracker, "compute-hw"):
+                tracker.set_property("compute-hw", 1)
 
         el["appsink"].set_property("emit-signals", False)
         el["appsink"].set_property("sync", False)
