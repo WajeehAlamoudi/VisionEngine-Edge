@@ -19,6 +19,11 @@ from core.rules import RulesEngine
 
 log = logging.getLogger(__name__)
 
+# How long to wait for the camera loops to finish before giving up on them.
+# Generous enough for a read already in flight to return, short enough that a
+# stuck camera does not stop the device from exiting.
+_SHUTDOWN_TIMEOUT_SECONDS = 10
+
 
 async def run(config_dir: str) -> None:
     cfg = load_config(config_dir)
@@ -106,7 +111,16 @@ async def run(config_dir: str) -> None:
     log.info("stopping camera pipelines...")
     for p in pipelines:
         p.stop()
-    await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Bounded, so one camera that will not come back cannot hold the process
+    # open. Everything below still runs, and the buffer is flushed, which
+    # matters more than a tidy exit for the pipeline that hung.
+    done, pending = await asyncio.wait(tasks, timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+    for task in pending:
+        name = task.get_name()
+        log.warning("%s did not stop within %ds — abandoning it",
+                    name, _SHUTDOWN_TIMEOUT_SECONDS)
+        task.cancel()
 
     # After the pipelines have stopped, so nothing is mid-inference, and before
     # the services below — a backend holding something outside the interpreter

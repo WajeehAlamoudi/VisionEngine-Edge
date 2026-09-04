@@ -86,7 +86,25 @@ class CameraPipeline:
         self._detections_at_report = 0
 
     def stop(self) -> None:
+        """
+        Ask the loop to finish, and unblock it so it can.
+
+        Setting the event alone is not enough: the loop spends nearly all its
+        time inside a blocking read() on its own thread, and cannot look at the
+        event until that returns. A camera that has gone quiet would hold
+        shutdown until its read timed out, which is seconds per camera.
+
+        Closing the source is what releases it — a capture that is released, or
+        a GStreamer pipeline set back to NULL, makes the pending read return
+        rather than wait. close() is safe to call twice, so the loop's own
+        close in its finally block still runs.
+        """
         self._stop.set()
+        try:
+            self._runtime.close()
+        except Exception:
+            log.debug("camera '%s': error closing source during stop",
+                      self._cam.id, exc_info=True)
 
     async def run(self) -> None:
         loop = asyncio.get_event_loop()
@@ -127,6 +145,11 @@ class CameraPipeline:
                     frame, results = await loop.run_in_executor(
                         executor, self._runtime.read)
                 except SourceUnavailable as exc:
+                    # stop() closes the source to release a blocked read, so
+                    # this is the expected way a shutdown arrives here. Leave
+                    # rather than announce a retry that will not happen.
+                    if self._stop.is_set():
+                        break
                     consecutive_errors += 1
                     self.last_error = str(exc)
                     delay = self._retry_delay(consecutive_errors)
@@ -135,6 +158,8 @@ class CameraPipeline:
                     await asyncio.sleep(delay)
                     continue
                 except Exception as exc:
+                    if self._stop.is_set():
+                        break
                     # An inference failure that repeats is usually permanent —
                     # a dead pipeline returns instantly, so without a delay this
                     # loop would spin at full speed logging every iteration.
