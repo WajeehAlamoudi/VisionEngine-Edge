@@ -156,12 +156,13 @@ TORCH_INSTALL_CMD=""
 POST_INSTALL_NOTE=""
 SETUP_DEEPSTREAM=0
 
-# what models.yaml's own device: field should be for this hardware
+# what models.yaml's own runtime:/accelerator: fields should be for this hardware
+MODEL_RUNTIME="ultralytics"
 case "$device_choice" in
-    2|3) MODEL_DEVICE="cuda"       ;;
-    4)   MODEL_DEVICE="mps"        ;;
-    5)   MODEL_DEVICE="deepstream" ;;
-    *)   MODEL_DEVICE="cpu"        ;;
+    2|3) MODEL_ACCELERATOR="cuda" ;;
+    4)   MODEL_ACCELERATOR="mps"  ;;
+    5)   MODEL_RUNTIME="deepstream"; MODEL_ACCELERATOR="cuda" ;;
+    *)   MODEL_ACCELERATOR="cpu"  ;;
 esac
 
 case "$device_choice" in

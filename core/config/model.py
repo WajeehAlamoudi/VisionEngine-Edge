@@ -9,34 +9,63 @@ from .strict import ID_PATTERN, Reader, describe
 _FILE = "models.yaml"
 
 _MODEL_KEYS = (
-    "id", "name", "version", "path", "device", "classes",
+    "id", "name", "version", "path", "runtime", "accelerator", "classes",
     "confidence_threshold", "iou_threshold", "input_size",
     "use_tracker", "tracker", "half", "ds_infer_config",
 )
 
-# Must stay in sync with _DEVICE_BACKENDS in core/model/detector/registry.py.
+# Which code path runs the model. Must stay in sync with _BACKENDS in
+# core/model/detector/registry.py, where each of these names IS the backend.
 # Duplicated rather than imported because that module pulls in ultralytics and
 # torch at import time, and config validation must stay free of heavy deps.
-DEVICES = ("auto", "cpu", "cuda", "mps", "coreml", "deepstream")
+RUNTIMES = ("ultralytics", "deepstream")
 
-# Devices whose backend assigns track_id inside the detector rather than
+# Which hardware the runtime executes on.
+ACCELERATORS = ("auto", "cpu", "cuda", "mps", "coreml")
+
+# Not every accelerator makes sense for every runtime. DeepStream is an NVIDIA
+# SDK and has nowhere else to run.
+_RUNTIME_ACCELERATORS: dict[str, tuple[str, ...]] = {
+    "ultralytics": ("auto", "cpu", "cuda", "mps", "coreml"),
+    "deepstream":  ("cuda",),
+}
+
+# Runtimes whose backend assigns track_id inside the detector rather than
 # through the tracker/ layer. Kept here so config validation can reason about
 # tracking without importing the backends. Must stay in sync with the
 # tracks_internally flags in core/model/detector/.
-_INTERNAL_TRACKING_DEVICES = ("deepstream",)
+_INTERNAL_TRACKING_RUNTIMES = ("deepstream",)
 
-# Which devices each weight format can actually run on. The sample has always
-# documented this; nothing enforced it until now.
+# Which accelerators each (runtime, weight format) pair can actually run on.
+# Keyed by both because the same extension means different things to different
+# runtimes: a .engine is a YOLO export to Ultralytics and a network for nvinfer
+# to DeepStream, and loading one as the other fails deep inside the SDK rather
+# than at startup.
 #
 # .engine deliberately excludes "auto": a TensorRT engine cannot load on CPU,
 # and auto resolves to CPU whenever CUDA is unavailable, turning a missing GPU
 # into an obscure runtime failure instead of a clear config error.
-_FORMAT_DEVICES: dict[str, tuple[str, ...]] = {
-    ".pt":        ("auto", "cpu", "cuda", "mps"),
-    ".onnx":      ("auto", "cpu", "cuda", "mps", "deepstream"),
-    ".engine":    ("cuda", "deepstream"),
-    ".mlpackage": ("coreml",),
-    ".tflite":    ("cpu",),
+_FORMAT_SUPPORT: dict[tuple[str, str], tuple[str, ...]] = {
+    ("ultralytics", ".pt"):        ("auto", "cpu", "cuda", "mps"),
+    ("ultralytics", ".onnx"):      ("auto", "cpu", "cuda", "mps"),
+    ("ultralytics", ".engine"):    ("cuda",),
+    ("ultralytics", ".mlpackage"): ("coreml",),
+    ("ultralytics", ".tflite"):    ("cpu",),
+    ("deepstream",  ".engine"):    ("cuda",),
+    ("deepstream",  ".onnx"):      ("cuda",),
+}
+
+# device was one key doing two jobs: naming the hardware (cpu/cuda/mps) and the
+# runtime (coreml/deepstream). Kept only to explain the split, since
+# reject_unknown would otherwise report it as an unrecognised key and say
+# nothing about what replaced it.
+_DEVICE_MIGRATION = {
+    "auto":       ("ultralytics", "auto"),
+    "cpu":        ("ultralytics", "cpu"),
+    "cuda":       ("ultralytics", "cuda"),
+    "mps":        ("ultralytics", "mps"),
+    "coreml":     ("ultralytics", "coreml"),
+    "deepstream": ("deepstream", "cuda"),
 }
 
 # YOLO models use a stride of 32, so other sizes get resized internally.
@@ -49,44 +78,79 @@ class ModelConfig:
     name: str
     version: str
     path: str
-    device: str             # auto | cpu | cuda | mps | coreml | deepstream
+    runtime: str            # ultralytics | deepstream - which code path runs it
+    accelerator: str        # auto | cpu | cuda | mps | coreml - what it runs on
     classes: list[str]      # what this deployment expects the model to detect
     confidence_threshold: float
     iou_threshold: float
     input_size: list[int]   # [width, height]
     use_tracker: bool        # true = tracking ON → track_id populated per object
-    tracker: str             # path to the tracker params file — a BoT-SORT yaml for
-                              # every device except deepstream, where it is the
-                              # nvtracker config that also chooses the algorithm
-    half: bool               # FP16 inference — only applied when device resolves to cuda;
-                              # ignored on cpu/mps, where it gives no benefit (see device.py)
+    tracker: str             # path to the tracker params file — a BoT-SORT yaml on
+                              # the ultralytics runtime, and on deepstream the
+                              # nvtracker config, which also chooses the algorithm
+    half: bool               # FP16 inference — only applied when the accelerator
+                              # resolves to cuda; ignored on cpu/mps, where it gives
+                              # no benefit (see device.py)
     ds_infer_config: str | None = None
-                             # nvinfer config file. Required for device: deepstream,
-                             # meaningless for every other device.
+                             # nvinfer config file. Required for runtime: deepstream,
+                             # meaningless for every other runtime.
 
 
-def _check_format(r: Reader, path_value: str, device: str) -> None:
-    """The weight file's extension must match the device that will run it."""
-    if not path_value or not device:
+def _check_format(r: Reader, path_value: str, runtime: str, accelerator: str) -> None:
+    """The weight format must be one this runtime can load on this accelerator."""
+    if not path_value or not runtime or not accelerator:
         return
 
     suffix = Path(path_value).suffix.lower()
-    allowed = _FORMAT_DEVICES.get(suffix)
-
-    if allowed is None:
+    known = {fmt for _, fmt in _FORMAT_SUPPORT}
+    if suffix not in known:
         r.error(
             r.path_of("path"),
             f"unrecognised model format '{suffix}' - "
-            f"expected one of {', '.join(sorted(_FORMAT_DEVICES))}",
+            f"expected one of {', '.join(sorted(known))}",
         )
         return
 
-    if device not in allowed:
+    allowed = _FORMAT_SUPPORT.get((runtime, suffix))
+    if allowed is None:
+        runners = sorted(rt for rt, fmt in _FORMAT_SUPPORT if fmt == suffix)
         r.error(
-            r.path_of("device"),
-            f"device '{device}' cannot run a {suffix} model - "
-            f"{suffix} requires {' or '.join(allowed)}",
+            r.path_of("path"),
+            f"runtime '{runtime}' cannot load a {suffix} model - "
+            f"{suffix} is loaded by {' or '.join(runners)}",
         )
+        return
+
+    if accelerator not in allowed:
+        r.error(
+            r.path_of("accelerator"),
+            f"accelerator '{accelerator}' cannot run a {suffix} model on the "
+            f"{runtime} runtime - it requires {' or '.join(allowed)}",
+        )
+
+
+def _check_migration(r: Reader) -> None:
+    """
+    Explain the device -> runtime + accelerator split.
+
+    reject_unknown would report 'device' as an unrecognised key and say nothing
+    about what replaced it, which is a poor way to meet a rename.
+    """
+    old = r.raw_value("device")
+    if old is None:
+        return
+    mapped = _DEVICE_MIGRATION.get(old if isinstance(old, str) else "")
+    if mapped:
+        runtime, accelerator = mapped
+        hint = (f"replace 'device: {old}' with "
+                f"'runtime: {runtime}' and 'accelerator: {accelerator}'")
+    else:
+        hint = ("replace it with a runtime (" + " | ".join(RUNTIMES) +
+                ") and an accelerator (" + " | ".join(ACCELERATORS) + ")")
+    r.error(
+        r.path_of("device"),
+        f"'device' was one key doing two jobs and has been split - {hint}",
+    )
 
 
 def _parse_one(r: Reader) -> ModelConfig:
@@ -99,7 +163,9 @@ def _parse_one(r: Reader) -> ModelConfig:
     name = r.string("name")
     version = r.string("version")
     path_value = r.string("path")
-    device = r.enum("device", DEVICES)
+    _check_migration(r)
+    runtime = r.enum("runtime", RUNTIMES)
+    accelerator = r.enum("accelerator", ACCELERATORS)
     classes = r.string_list("classes")
     confidence_threshold = r.number("confidence_threshold", minimum=0.0, maximum=1.0)
     iou_threshold = r.number("iou_threshold", minimum=0.0, maximum=1.0)
@@ -115,24 +181,32 @@ def _parse_one(r: Reader) -> ModelConfig:
     half_ok = r.error_count == before_half
 
     # Optional rather than required-with-null: it configures nvinfer, so it is
-    # meaningless on every device except deepstream, and demanding an explicit
+    # meaningless on every runtime except deepstream, and demanding an explicit
     # null in each Pi/Mac/CPU model entry would be noise.
     ds_infer_config = r.optional_string("ds_infer_config")
 
-    _check_format(r, path_value, device)
+    _check_format(r, path_value, runtime, accelerator)
 
-    if device == "deepstream" and not ds_infer_config:
+    allowed_accelerators = _RUNTIME_ACCELERATORS.get(runtime)
+    if allowed_accelerators and accelerator not in allowed_accelerators:
+        r.error(
+            r.path_of("accelerator"),
+            f"runtime '{runtime}' cannot run on accelerator '{accelerator}' - "
+            f"it supports {' or '.join(allowed_accelerators)}",
+        )
+
+    if runtime == "deepstream" and not ds_infer_config:
         r.error(
             r.path_of("ds_infer_config"),
-            "required for device 'deepstream' - nvinfer is configured by this "
+            "required for runtime 'deepstream' - nvinfer is configured by this "
             "file (engine, network shape, class count, clustering), and there "
             "is no default. Copy config/config_sample/deepstream_infer.sample.txt",
         )
-    elif device != "deepstream" and ds_infer_config:
+    elif runtime != "deepstream" and ds_infer_config:
         r.warn(
             "ds_infer_config",
-            f"ignored on device '{device}' - it only configures nvinfer, "
-            f"which only device 'deepstream' runs",
+            f"ignored on runtime '{runtime}' - it only configures nvinfer, "
+            f"which only the deepstream runtime uses",
         )
 
 
@@ -145,9 +219,10 @@ def _parse_one(r: Reader) -> ModelConfig:
             f"{input_size} is not a multiple of {_STRIDE} - YOLO will resize internally",
         )
 
-    if half_ok and half and path_value and device:
-        if device not in ("cuda", "auto"):
-            r.warn("half", f"half has no effect on device '{device}' and will be ignored")
+    if half_ok and half and path_value and accelerator:
+        if accelerator not in ("cuda", "auto"):
+            r.warn("half",
+                   f"half has no effect on accelerator '{accelerator}' and will be ignored")
         elif Path(path_value).suffix.lower() == ".engine":
             r.warn("half", "half has no effect on a .engine - precision is fixed at export")
 
@@ -156,7 +231,8 @@ def _parse_one(r: Reader) -> ModelConfig:
         name=name,
         version=version,
         path=path_value,
-        device=device,
+        runtime=runtime,
+        accelerator=accelerator,
         classes=classes,
         confidence_threshold=confidence_threshold,
         iou_threshold=iou_threshold,

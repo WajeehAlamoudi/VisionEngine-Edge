@@ -67,17 +67,32 @@ a million useful rows a day and one that writes ten million, most of them noise.
 
 ## Detector backends
 
-`models.yaml` → `device` selects the backend. There is no autodetection beyond
-`auto` resolving among torch devices.
+`models.yaml` carries two keys, and they answer different questions. `runtime`
+names the code path that runs the model; `accelerator` names the hardware it
+runs on. There is no autodetection beyond `auto` resolving among torch devices.
 
-| `device` | Backend | Weight format | Notes |
-|---|---|---|---|
-| `auto` | Ultralytics | `.pt` / `.engine` | Resolves to cuda → mps → cpu, in that order |
-| `cpu` | Ultralytics | `.pt` | Baseline. Works everywhere |
-| `cuda` | Ultralytics | `.pt` / `.engine` | Jetson and desktop NVIDIA |
-| `mps` | Ultralytics | `.pt` | Apple Metal |
-| `coreml` | Ultralytics | `.mlpackage` | Execution target is fixed **at export time**, not by `device=` |
-| `deepstream` | DeepStream | `.engine` / `.onnx` | Same NVIDIA hardware as `cuda`, different runtime on it. **Tracks too** when `use_tracker` is on — see below |
+| `runtime` | Valid `accelerator` | Weight format | Capture | Tracking |
+|---|---|---|---|---|
+| `ultralytics` | `auto`, `cpu`, `cuda`, `mps`, `coreml` | `.pt`, `.onnx`, `.engine`, `.mlpackage`, `.tflite` | OpenCV | separate `Tracker` |
+| `deepstream` | `cuda` | `.engine`, `.onnx` | GStreamer | fused, see below |
+
+`auto` resolves cuda → mps → cpu in that order. `coreml` is listed as an
+accelerator rather than a runtime because a `.mlpackage` still loads through
+Ultralytics — its execution target is fixed **at export time**, not by the
+config.
+
+These used to be one `device` key, which named the hardware for `cpu`, `cuda`
+and `mps` but the runtime for `coreml` and `deepstream` — so `cuda` and
+`deepstream` both meant "the GPU" while differing in what ran on it. Splitting
+them removed a translation table from the registry: `runtime` **is** the
+backend name, so `_BACKENDS[cfg.runtime]` replaced a lookup through a second
+dictionary. An old config gets a startup error naming its replacement rather
+than an unrecognised-key message.
+
+Format validation is keyed on both, because the same extension means different
+things to each runtime: a `.engine` is a YOLO export to Ultralytics and a
+network for `nvinfer` to DeepStream, and loading one as the other fails deep
+inside the SDK rather than at startup.
 
 Each backend imports its SDK **lazily, inside its own `load()`/`infer()`** —
 never at module top level. That is what lets a machine with no DeepStream

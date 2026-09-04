@@ -44,10 +44,10 @@ _REID_BACKENDS = ("pytorch", "tensorrt")
 _REID_BACKENDS_REQUIRING_INSTALL = ("onnx", "openvino", "tflite", "torchscript")
 
 # The ReID network is a torch model, so it needs a torch device. The detector's
-# device from models.yaml is NOT usable: torch.device() raises on values like
-# "coreml" and "deepstream", so a CoreML detector with with_reid: true used to
-# crash at load. They are genuinely separate devices - one runs the detector,
-# torch runs ReID.
+# accelerator from models.yaml is NOT usable directly: torch.device() raises
+# on "coreml", so a CoreML detector with with_reid: true used to crash at
+# load. They are genuinely separate devices - one runs the detector, torch
+# runs ReID.
 _TORCH_DEVICES = ("cpu", "cuda", "mps")
 
 
@@ -154,7 +154,7 @@ class BoxMotTracker(Tracker):
         ReID on cpu or cuda.
         """
         if requested == "auto":
-            detector_device = _resolve_device(self._cfg.device)
+            detector_device = _resolve_device(self._cfg.accelerator)
             if detector_device in _TORCH_DEVICES:
                 return torch.device(detector_device)
             log.warning(

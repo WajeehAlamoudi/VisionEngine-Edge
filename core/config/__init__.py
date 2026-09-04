@@ -149,7 +149,7 @@ def _validate(cfg: AppConfig) -> None:
         # deepstream - which builds no nvtracker at all when use_tracker is
         # false, and so never reads this file.
         if model.use_tracker and not Path(model.tracker).is_file():
-            if model.device == "deepstream":
+            if model.runtime == "deepstream":
                 errors.append(
                     f"models[{model.id}]: tracker file '{model.tracker}' does not "
                     f"exist - nvtracker reads it to decide which algorithm to run, "
@@ -164,7 +164,7 @@ def _validate(cfg: AppConfig) -> None:
                     f"fall back to defaults with ReID disabled"
                 )
 
-        if model.device == "deepstream" and model.ds_infer_config:
+        if model.runtime == "deepstream" and model.ds_infer_config:
             if not Path(model.ds_infer_config).is_file():
                 errors.append(
                     f"models[{model.id}]: ds_infer_config '{model.ds_infer_config}' "

@@ -219,7 +219,8 @@ Enable per model in `models.yaml`. Every camera using that model gets persistent
 models:
   - id: general_coco
     path: ./models/yolo26n.engine
-    device: cuda
+    runtime: ultralytics
+    accelerator: cuda
     use_tracker: true                        # ← flip this ON
     tracker: "config/botsort_tracker.yaml"   # ← tracker params live here
 ```

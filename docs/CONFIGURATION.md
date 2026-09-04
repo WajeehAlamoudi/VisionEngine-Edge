@@ -56,14 +56,14 @@ can be reviewed in a diff.
 | `device.yaml` | Device identity, log level, heartbeat, health file | Always |
 | `api.yaml` | Branch id, API key, backend URL, ingest and buffer | Always |
 | `cameras.yaml` | Sources, model binding, class filter, zones, tables | Always |
-| `models.yaml` | Model registry — paths, devices, classes, tracker | When adding a model |
+| `models.yaml` | Model registry — paths, runtimes, classes, tracker | When adding a model |
 | `rules.yaml` | What is stored and what raises an alert | Per use case |
 | `notifications.yaml` | Log channel and webhook delivery, per-rule routing | Per use case |
 | `collection.yaml` | Dataset-building sessions | Optional |
 | `botsort_tracker.yaml` | Tracker tuning — device-specific | When tracking is on |
-| `deepstream_infer.txt` | nvinfer config — network shape, class count, clustering | `device: deepstream` only |
-| `peoplenet_labels.txt` | Model's class names, one per line, in model order | `device: deepstream` only |
-| `nvdcf_tracker.yml` | nvtracker config — chooses the tracking algorithm | `device: deepstream` + `use_tracker` |
+| `deepstream_infer.txt` | nvinfer config — network shape, class count, clustering | `runtime: deepstream` only |
+| `peoplenet_labels.txt` | Model's class names, one per line, in model order | `runtime: deepstream` only |
+| `nvdcf_tracker.yml` | nvtracker config — chooses the tracking algorithm | `runtime: deepstream` + `use_tracker` |
 
 `botsort_tracker.yaml` is the odd one out: it is **not** loaded by
 `load_config()` and **not** strictly validated. It is read at model load time
@@ -111,16 +111,17 @@ tables, which is how one camera splits people and vehicles apart.
 
 ### `models.yaml` — the model registry
 
-One entry per weight file: `path`, the `device` that runs it, the `classes` it
-is expected to output, and its thresholds. Declaring a model costs nothing —
+One entry per weight file: `path`, the `runtime` that runs it, the
+`accelerator` it runs on, the `classes` it is expected to output, and its
+thresholds. Declaring a model costs nothing —
 only models used by an **enabled** camera are loaded or checked for existence.
 
-`use_tracker` turns on BoT-SORT for every camera bound to this model, and
+`use_tracker` turns on tracking for every camera bound to this model, and
 `tracker` points at the tracker config. `half` requests FP16 and is meaningful
-only on CUDA. Which device implies which backend is in
+only on CUDA. Which runtime pairs with which accelerator is in
 [ARCHITECTURE](ARCHITECTURE.md#detector-backends).
 
-#### `device: deepstream`
+#### `runtime: deepstream`
 
 NVIDIA's DeepStream SDK, on Jetson or a dGPU. Same hardware as `cuda`, a
 different runtime on it: `nvinfer` for detection and `nvtracker` for tracking,
@@ -129,11 +130,11 @@ the dependencies — it verifies the SDK, installs the GStreamer Python
 bindings, and copies a tracker config out of the installed SDK so it matches
 your DeepStream version.
 
-Three fields behave differently on this device:
+Three fields behave differently on this runtime:
 
 | Field | On `deepstream` |
 |---|---|
-| `ds_infer_config` | **Required.** nvinfer's config — input shape, class count, precision, clustering. Omit the key entirely on every other device. |
+| `ds_infer_config` | **Required.** nvinfer's config — input shape, class count, precision, clustering. Omit the key entirely on every other runtime. |
 | `tracker` | Chooses the **algorithm**, not just its parameters — IOU, NvSORT, NvDCF or NvDeepSORT. Required when `use_tracker` is true. |
 | `use_tracker` | Means the same as everywhere else. `true` builds an `nvtracker` element into the pipeline; `false` builds none, so NvDCF never runs and `track_id` is null. |
 
@@ -378,7 +379,7 @@ YAML at the camera's true resolution. See [TOOLS](TOOLS.md#zones-mode).
 ## Adding a model
 
 1. Put the weight file on the device, conventionally under `models/`.
-2. Add an entry to `models.yaml` with a unique `id`, its `path`, a `device` the
+2. Add an entry to `models.yaml` with a unique `id`, its `path`, a `runtime` and `accelerator` the
    format can run on, and the `classes` you expect from it.
 3. Reference the `id` from a camera's `model_id`.
 4. Restart.

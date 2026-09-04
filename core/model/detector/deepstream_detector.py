@@ -176,8 +176,8 @@ class DeepStreamDetector(Detector):
             raise FileNotFoundError(
                 f"detector '{self._cfg.id}': DeepStream's tracker library is "
                 f"missing at {_LL_LIB}. This backend needs the DeepStream SDK "
-                f"installed; use device: cuda with a .engine instead on a "
-                f"machine without it, or set use_tracker: false to run "
+                f"installed; use runtime: ultralytics with a .engine instead on "
+                f"a machine without it, or set use_tracker: false to run "
                 f"detection only."
             )
 

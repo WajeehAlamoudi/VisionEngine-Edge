@@ -612,6 +612,17 @@ class Reader:
         """The fully qualified path of a key, for use with error()."""
         return self._key_path(key)
 
+    def raw_value(self, key: str):
+        """
+        The value as written, or None if the key is absent. Records nothing.
+
+        Every reader above treats a missing key as an error, which is what
+        makes a typo impossible to miss. This is the exception, for asking
+        whether a key is present at all — checking for a key that has been
+        renamed away must not itself report the key as missing.
+        """
+        return self._raw.get(key)
+
     def warn(self, key: str, message: str) -> None:
         """Record a non-fatal concern. Logged at raise_if_errors() time."""
         self._warnings.append((self._key_path(key), message))

@@ -264,7 +264,7 @@ the full field reference.
 |---|---|
 | `api.yaml` | `branch_id` and `key` from stage 1, backend URL |
 | `device.yaml` | Device id, location, log level, heartbeat |
-| `models.yaml` | Engine path, `device: cuda`, classes, tracker config path |
+| `models.yaml` | Engine path, `runtime` + `accelerator`, classes, tracker config path |
 | `cameras.yaml` | RTSP sources, `fps_target`, zones per camera |
 | `rules.yaml` | What is stored and what alerts — **the storage gate** |
 | `notifications.yaml` | Log channel, webhooks and their rule filters |

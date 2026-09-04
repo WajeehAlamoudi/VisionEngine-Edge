@@ -37,8 +37,10 @@ models:
   #               Format determines which device can run it. This pairing is
   #               enforced at startup:
   #                 .pt          PyTorch      → auto | cpu | cuda | mps
-  #                 .onnx        ONNX         → auto | cpu | cuda | mps | deepstream
-  #                 .engine      TensorRT     → cuda | deepstream
+  #                 .onnx        ONNX         → ultralytics: auto|cpu|cuda|mps
+  #                                             deepstream:  cuda
+  #                 .engine      TensorRT     → ultralytics: cuda
+  #                                             deepstream:  cuda
   #                 .tflite      TF Lite      → cpu
   #                 .mlpackage   CoreML       → coreml
   #
@@ -47,21 +49,33 @@ models:
   #               A .engine is also built for the exact GPU and TensorRT version
   #               it was exported on — export it on the device that will run it.
   #
-  #   device      Hardware accelerator to use for inference.
+  #   runtime     Which code path runs this model. This is the single choice
+  #               that decides everything else about how it executes.
+  #
+  #               ultralytics → Ultralytics/torch. Frames are captured with
+  #                             OpenCV and handed to the model one at a time.
+  #                             Runs on any of the accelerators below.
+  #               deepstream  → NVIDIA DeepStream. nvinfer for detection and,
+  #                             when use_tracker is on, nvtracker in the same
+  #                             GStreamer pipeline. NVIDIA hardware only, and
+  #                             needs the DeepStream SDK plus the pyds bindings
+  #                             installed. See "runtime: deepstream" below.
+  #
+  #   accelerator The hardware the runtime executes on.
   #               auto     → detect best available at startup (recommended)
   #               cpu      → force CPU (slowest, works everywhere)
-  #               cuda     → NVIDIA GPU (Jetson, desktop GPU) via Ultralytics
-  #               deepstream → NVIDIA GPU via the DeepStream SDK — nvinfer for
-  #                          detection and nvtracker for tracking, in one
-  #                          GStreamer pipeline. Same hardware as cuda, a
-  #                          different runtime on it. Jetson / dGPU only, and
-  #                          needs DeepStream plus the pyds bindings installed.
-  #                          See "device: deepstream" below.
+  #               cuda     → NVIDIA GPU (Jetson, desktop GPU)
   #               coreml   → Apple Neural Engine (Mac Mini M-series)
   #               mps      → Apple Metal (Mac Mini M-series, PyTorch)
   #
-  #               A device that cannot run the file's format is a startup
-  #               error — see the format table above.
+  #               Not every pairing is valid: the deepstream runtime only runs
+  #               on cuda, and a weight format has to suit both. Both are
+  #               checked at startup.
+  #
+  #               These two keys replaced a single `device` key that named the
+  #               hardware for some values (cpu/cuda/mps) and the runtime for
+  #               others (coreml/deepstream). An old config gets an error at
+  #               startup naming the replacement for its value.
   #
   #   classes     The classes this deployment expects from this model. Names
   #               must match exactly what the model outputs, and cameras may
@@ -102,7 +116,7 @@ models:
   #               Standard YOLO sizes: [320,320] (fast), [640,640] (balanced), [1280,1280] (accurate)
   #
   #   use_tracker The switch for tracking, and it means the same thing on every
-  #               device — what changes is which tracker it turns on. On
+  #               runtime — what changes is which tracker it turns on. On
   #               deepstream it decides whether an nvtracker element is built
   #               into the pipeline at all; false there means detection only,
   #               with NvDCF never running and track_id null, exactly as on any
@@ -128,7 +142,7 @@ models:
   #               There is no way to select ByteTrack; naming a different file
   #               changes the parameters, never the algorithm.
   #
-  #               On device: deepstream this field means something slightly
+  #               On runtime: deepstream this field means something slightly
   #               different — it is nvtracker's config, and it DOES choose the
   #               algorithm. Point it at one of DeepStream's own files:
   #                 config_tracker_IOU.yml           cheapest, weak through occlusion
@@ -140,14 +154,14 @@ models:
   #               samples/configs/deepstream-app/. Swapping tracker algorithms
   #               is exactly this one line.
   #
-  #               The file must exist when use_tracker: true, on any device. A
+  #               The file must exist when use_tracker: true, on any runtime. A
   #               missing file used to fall back silently to ReID-disabled
   #               defaults, which produced tracking that ran but re-assigned
   #               IDs constantly.
   #
   #   ds_infer_config
-  #               nvinfer's configuration file. REQUIRED for device: deepstream,
-  #               ignored (with a warning) on every other device.
+  #               nvinfer's configuration file. REQUIRED for runtime: deepstream,
+  #               ignored (with a warning) on every other runtime.
   #
   #               This is where the network itself is described — input shape,
   #               class count, precision, clustering — none of which map onto
@@ -176,7 +190,8 @@ models:
     name: "YOLOv8 General COCO"
     version: "1.0.0"
     path: "./models/yolov8n.pt"
-    device: auto
+    runtime: ultralytics
+    accelerator: auto
     classes:
       - person
       - bicycle
@@ -200,7 +215,8 @@ models:
     name: "Person Detector — Mall Fine-Tuned"
     version: "1.0.0"
     path: "./models/person_mall_v1.pt"
-    device: auto
+    runtime: ultralytics
+    accelerator: auto
     classes:
       - person
     confidence_threshold: 0.6
@@ -218,7 +234,8 @@ models:
     name: "Vehicle Detector"
     version: "1.0.0"
     path: "./models/vehicle_v1.pt"
-    device: auto
+    runtime: ultralytics
+    accelerator: auto
     classes:
       - car
       - truck
@@ -242,7 +259,8 @@ models:
     name: "YOLOv8 General COCO — CoreML"
     version: "1.0.0"
     path: "./models/yolov8n.mlpackage"
-    device: coreml
+    runtime: ultralytics
+    accelerator: coreml
     classes:
       - person
       - bicycle
@@ -279,7 +297,8 @@ models:
     name: "NVIDIA PeopleNet — DeepStream + NvDCF"
     version: "2.6.1"
     path: "./models/peoplenet_fp16.engine"
-    device: deepstream
+    runtime: deepstream
+    accelerator: cuda
     ds_infer_config: "config/deepstream_infer.txt"
     classes:
       - person

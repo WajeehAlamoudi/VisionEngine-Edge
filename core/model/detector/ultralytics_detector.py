@@ -23,7 +23,7 @@ class UltralyticsDetector(Detector):
         self._name_to_idx: dict[str, int] = {}
 
     def load(self) -> None:
-        self._device = _resolve_device(self._cfg.device)
+        self._device = _resolve_device(self._cfg.accelerator)
         # half only helps on a GPU — on cpu/mps it typically gives no speedup
         # (sometimes slower), so a stray half: true in config is silently a
         # no-op there instead of doing something counterproductive.
@@ -54,7 +54,7 @@ class UltralyticsDetector(Detector):
         # A .mlpackage's execution target (CPU/GPU/Neural Engine) is fixed
         # at export time — Ultralytics' CoreML backend doesn't accept a
         # device=/half= override the way its torch backends do.
-        if self._cfg.device != "coreml":
+        if self._cfg.accelerator != "coreml":
             predict_kwargs["device"] = self._device
             predict_kwargs["half"] = self._half
         results = self._model.predict(frame, **predict_kwargs)
