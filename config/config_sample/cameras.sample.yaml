@@ -17,6 +17,13 @@ cameras:
   #                 rtsp://...        RTSP stream URL (IP cameras, NVRs)
   #                 /path/to/file.mp4 Video file (for testing without a real camera)
   #
+  #               How the source is opened depends on the runtime of the
+  #               model this camera is bound to. The ultralytics runtime
+  #               reads all three with OpenCV. The deepstream runtime reads
+  #               URIs through NVDEC and cannot open a USB index — a camera
+  #               on a bare integer is refused at startup with that
+  #               explanation, and needs runtime: ultralytics instead.
+  #
   #   enabled     true  → camera pipeline starts on device boot
   #               false → camera is defined but not started
   #                       use this to temporarily disable a camera without removing it

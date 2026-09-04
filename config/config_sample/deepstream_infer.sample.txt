@@ -1,6 +1,6 @@
 # ── nvinfer configuration — NVIDIA PeopleNet ──────────────────────────────────
 #
-# Read by the nvinfer element inside DeepStreamDetector. This file, not
+# Read by the nvinfer element inside DeepStreamCameraRuntime. This file, not
 # models.yaml, is what tells DeepStream how to run the network: its input
 # shape, how many classes it has, and how raw output becomes boxes.
 #
@@ -16,9 +16,10 @@
 #   DashCamNet     car, bicycle, person, roadsign   960x544   4 classes
 #   FaceDetect     face                             736x416   1 class
 #
-# Swapping touches two files, not one. The engine is named in models.yaml, not
-# here — `path` is set on nvinfer at runtime and overrides model-engine-file
-# below, so models.yaml stays the single source of truth for which weights run.
+# Swapping touches two files, not one. The weights are named in models.yaml,
+# not here: `path` is set on nvinfer when the pipeline is built and overrides
+# the value below, so models.yaml stays the single source of truth for which
+# weights run and the two files cannot drift apart.
 #
 #   models.yaml    path             the new .engine
 #                  classes          the new class list
@@ -44,10 +45,19 @@ gpu-id=0
 net-scale-factor=0.0039215697906911373
 model-color-format=0
 
-# The engine. NOTE: DeepStreamDetector overrides this at runtime with the
-# `path` from models.yaml, so that models.yaml stays the single source of
-# truth for which weights run and the two files cannot drift apart. It is left
-# here so this file also works standalone with deepstream-app.
+# The weights. Overridden at build time by `path` from models.yaml — and the
+# property used depends on that path's extension, because the two are not
+# interchangeable:
+#
+#   .engine → model-engine-file   a serialized TensorRT plan, loaded as-is
+#   .onnx   → onnx-file           a network nvinfer builds an engine from,
+#                                 on first run, which takes minutes
+#
+# Building on first run is convenient but happens inside the pipeline start,
+# so a camera looks hung. Prefer building the engine yourself with trtexec and
+# pointing models.yaml `path` at the .engine.
+#
+# Left set here so this file also works standalone with deepstream-app.
 model-engine-file=../models/peoplenet_fp16.engine
 
 # One class name per line, in the MODEL's own order. Path is relative to this

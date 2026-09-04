@@ -34,8 +34,8 @@ models:
   #               Relative to the project root, or absolute.
   #               Convention: store all model files in ./models/
   #
-  #               Format determines which device can run it. This pairing is
-  #               enforced at startup:
+  #               Which formats are loadable depends on the runtime AND the
+  #               accelerator, and the pairing is enforced at startup:
   #                 .pt          PyTorch      → auto | cpu | cuda | mps
   #                 .onnx        ONNX         → ultralytics: auto|cpu|cuda|mps
   #                                             deepstream:  cuda
@@ -68,6 +68,12 @@ models:
   #                             hardware only, and needs the DeepStream SDK
   #                             plus the pyds bindings. See "runtime:
   #                             deepstream" below.
+  #
+  #               One limit worth knowing before binding a camera: the
+  #               deepstream runtime reads URIs through NVDEC and cannot
+  #               open a USB device index. A camera whose source is a bare
+  #               integer needs runtime: ultralytics. RTSP, HTTP and file
+  #               sources work on both.
   #
   #   accelerator The hardware the runtime executes on.
   #               auto     → detect best available at startup (recommended)

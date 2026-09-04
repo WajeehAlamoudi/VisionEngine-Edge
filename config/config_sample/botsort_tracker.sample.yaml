@@ -3,6 +3,10 @@
 # Referenced from models.yaml via the "tracker:" field, e.g.:
 #   tracker: "config/botsort_tracker.yaml"
 #
+# Read only by the ultralytics runtime. A model on runtime: deepstream
+# points "tracker:" at an nvtracker config instead, where the file also
+# decides which algorithm runs — see config_sample/nvdcf_tracker.sample.yml.
+#
 # Naming convention for tracker config files: "<algorithm>_tracker.yaml"
 # (e.g. a future ByteTrack config would be "bytetrack_tracker.yaml").
 # Add a new one the same way if a new tracker backend is registered in
@@ -131,11 +135,12 @@ removed_stracks_buffer: 100
 # Selecting one raises at startup instead.
 reid_backend: pytorch
 
-# A TORCH device, which is not necessarily the detector's device.
-#   auto → follow models.yaml when it names a torch device, else cpu
+# A TORCH device, which is not necessarily the model's accelerator.
+#   auto → follow models.yaml accelerator when it names a torch device,
+#          else cpu
 #   cpu | cuda | mps
-# A CoreML or DeepStream detector still needs its ReID on cpu or cuda: those are
-# not torch devices, and reusing them here used to raise at model load.
+# A CoreML model still needs its ReID on cpu or cuda: coreml is not a torch
+# device, and reusing it here used to raise at model load.
 reid_device: auto
 
 # FP16 for the ReID network. Applied only when reid_device resolves to cuda;
