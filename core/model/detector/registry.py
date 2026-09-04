@@ -39,6 +39,7 @@ def build_camera_runtime(
         cam: CameraConfig,
         model: ModelConfig,
         runner: "ModelRunner | None",
+        with_frames: bool = False,
 ) -> CameraRuntime:
     """
     The video path for one camera, chosen by its model's runtime.
@@ -46,12 +47,17 @@ def build_camera_runtime(
     `runner` is supplied for runtimes that go through the model layer and is
     None for those that do not — ModelRegistry builds one only when
     core.config.model.needs_model_runner() says so.
+
+    with_frames asks for decoded pixels alongside the detections. Runtimes that
+    already hold frames ignore it; one that keeps them on the GPU has to add a
+    conversion and a copy per frame, so it is requested only by things that
+    draw — the debug overlay — and never by the running pipeline.
     """
     if model.runtime == "deepstream":
         # Imported here, not at module level: a Raspberry Pi or a Mac must be
         # able to import this registry without the DeepStream SDK present.
         from .deepstream.runtime import DeepStreamCameraRuntime
-        return DeepStreamCameraRuntime(cam, model)
+        return DeepStreamCameraRuntime(cam, model, with_frames=with_frames)
 
     if model.runtime == "ultralytics":
         from .ultralytics.runtime import UltralyticsCameraRuntime

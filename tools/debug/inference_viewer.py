@@ -50,7 +50,7 @@ def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference")
         )
         runner.load()
 
-    stream = build_camera_runtime(cam, model_cfg, runner)
+    stream = build_camera_runtime(cam, model_cfg, runner, with_frames=True)
     log.info("model ready — opening camera '%s'", camera_id)
     try:
         stream.open()

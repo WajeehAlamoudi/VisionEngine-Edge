@@ -115,9 +115,14 @@ class DeepStreamCameraRuntime(CameraRuntime):
     runtime.
     """
 
-    def __init__(self, cam: CameraConfig, model: ModelConfig) -> None:
+    def __init__(self, cam: CameraConfig, model: ModelConfig,
+                 with_frames: bool = False) -> None:
         super().__init__(cam)
         self._model = model
+        # Pulling pixels back to host memory costs a conversion and a copy per
+        # frame — the exact cost this runtime exists to avoid — so it is off
+        # unless something actually needs an image. The debug overlay does.
+        self._with_frames = with_frames
         self._gst = None
         self._pyds = None
 
@@ -318,13 +323,27 @@ class DeepStreamCameraRuntime(CameraRuntime):
         appsink.set_property("sync", False)
         appsink.set_property("max-buffers", 1)
         appsink.set_property("drop", True)
+        if self._with_frames:
+            # BGR straight out, so read() hands back what OpenCV expects
+            # without another conversion on the Python side.
+            appsink.set_property(
+                "caps", Gst.Caps.from_string("video/x-raw, format=BGR"))
 
         # nvurisrcbin has no pad until it has connected, so this is linked in
         # the callback below rather than here.
         source.connect("pad-added", self._on_pad_added, streammux)
 
+        # Frames leave the GPU only on the way to an appsink that was asked
+        # for them; otherwise the buffer reaching appsink is still NVMM and
+        # carries nothing but metadata.
+        outconv = make("nvvideoconvert") if self._with_frames else None
+        if outconv is not None and _has_property(outconv, "compute-hw"):
+            # The VIC cannot produce BGR — the same limitation that took down
+            # an earlier version of this pipeline.
+            outconv.set_property("compute-hw", 1)
+
         tail = streammux
-        for el in (pgie, tracker, appsink):
+        for el in (pgie, tracker, outconv, appsink):
             if el is not None:
                 tail.link(el)
                 tail = el
@@ -402,7 +421,35 @@ class DeepStreamCameraRuntime(CameraRuntime):
 
         self._last_read = time.time()
         width, height = self._size
-        return None, self._detections.parse(self._pyds, sample, width, height)
+        detections = self._detections.parse(self._pyds, sample, width, height)
+        return self._frame_from(sample), detections
+
+    def _frame_from(self, sample):
+        """
+        The decoded frame, when one was asked for, as a BGR array.
+
+        Returns None otherwise — the buffer is still in GPU memory and there is
+        nothing to map. Callers already treat None as "this runtime has no
+        pixels", which is the normal case.
+        """
+        if not self._with_frames:
+            return None
+
+        import numpy as np
+
+        buf = sample.get_buffer()
+        ok, info = buf.map(self._gst.MapFlags.READ)
+        if not ok:
+            return None
+        try:
+            width, height = self._size
+            # Copied before unmapping: the array is a view onto memory
+            # GStreamer takes back as soon as the buffer is released.
+            return np.ndarray(
+                shape=(height, width, 3), dtype=np.uint8, buffer=info.data
+            ).copy()
+        finally:
+            buf.unmap(info)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
