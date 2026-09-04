@@ -84,7 +84,10 @@ class UltralyticsCameraRuntime(CameraRuntime):
         self._cap: cv2.VideoCapture | None = None
         self._size: tuple[int, int] = (0, 0)
         self._frame_interval = 1.0 / cam.fps_target if cam.fps_target else 0.0
-        self._last_inference = 0.0
+        # When the next frame is due, advanced by one interval each time rather
+        # than reset, so the average rate is fps_target and not the next frame
+        # arrival after it.
+        self._next_due = 0.0
 
     def open(self) -> None:
         """
@@ -117,26 +120,53 @@ class UltralyticsCameraRuntime(CameraRuntime):
 
     def read(self) -> tuple[object | None, list[InferenceResult]]:
         """
-        Read the next frame, and infer on it only when fps_target allows.
+        Take the next frame fps_target allows, and infer on that one only.
 
-        Frames are read and discarded rather than left unread. OpenCV keeps
-        decoding into its buffer whether or not this reads, so skipping the
-        read would not save the decode — it would only mean the next frame
-        collected is a stale one. Draining keeps what does reach the model
-        current, which is the behaviour this loop has always had.
+        Frames in between are still pulled off the stream rather than left
+        unread — OpenCV decodes into its buffer whether or not this reads, so
+        skipping the read would not save the decode, it would only mean the
+        next frame collected is a stale one.
+
+        They are pulled with grab() instead of read(), which is the saving:
+        read() is grab() plus retrieve(), and retrieve() is the half that
+        converts the frame to BGR and allocates an array. A frame about to be
+        discarded needs neither, so only the frame that reaches the model is
+        retrieved.
+
+        The equivalent gate on the DeepStream runtime sits before nvinfer, for
+        the same reason: fps_target should be a ceiling on inference and
+        tracking, not on how often results are collected.
         """
         if self._cap is None:
             raise RuntimeError("read() before open()")
 
         while True:
-            ok, frame = self._cap.read()
-            if not ok or frame is None:
+            if not self._cap.grab():
                 raise SourceUnavailable("frame read failed")
 
             now = time.time()
-            if now - self._last_inference >= self._frame_interval:
-                self._last_inference = now
-                return frame, self._runner.run(frame, self._cam.classes)
+            if now < self._next_due:
+                continue    # discarded without being converted or copied
+
+            ok, frame = self._cap.retrieve()
+            if not ok or frame is None:
+                raise SourceUnavailable("frame decoded but could not be retrieved")
+
+            # Advance the schedule by one interval rather than restarting it
+            # from now. Restarting rounds every period up to the next arriving
+            # frame, so a 25 fps source asked for 15 would settle at 12.5 —
+            # each 66ms slot waiting for a frame that comes at 80ms. Advancing
+            # lets a slot that was overshot be made up by the next one, which
+            # averages out to the rate that was asked for.
+            self._next_due += self._frame_interval
+
+            # Unless inference itself is slower than the interval, in which
+            # case the schedule is unreachable and would build up a debt that
+            # comes back as a burst. Start again from now instead.
+            if now - self._next_due > self._frame_interval:
+                self._next_due = now + self._frame_interval
+
+            return frame, self._runner.run(frame, self._cam.classes)
 
     def close(self) -> None:
         if self._cap is not None:
