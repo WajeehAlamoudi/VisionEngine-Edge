@@ -108,6 +108,12 @@ async def run(config_dir: str) -> None:
 
     # ── graceful shutdown ─────────────────────────────────────────────────────
 
+    # Before the cameras, not after. The reporter reads their state, and during
+    # the wait below that state is half torn down — it would send heartbeats
+    # describing a device that is stopping as though it were running.
+    log.info("stopping heartbeat...")
+    await health.stop()
+
     log.info("stopping camera pipelines...")
     for p in pipelines:
         p.stop()
@@ -116,11 +122,15 @@ async def run(config_dir: str) -> None:
     # open. Everything below still runs, and the buffer is flushed, which
     # matters more than a tidy exit for the pipeline that hung.
     done, pending = await asyncio.wait(tasks, timeout=_SHUTDOWN_TIMEOUT_SECONDS)
-    for task in pending:
-        name = task.get_name()
-        log.warning("%s did not stop within %ds — abandoning it",
-                    name, _SHUTDOWN_TIMEOUT_SECONDS)
-        task.cancel()
+    if pending:
+        for task in pending:
+            log.warning("%s did not stop within %ds — abandoning it",
+                        task.get_name(), _SHUTDOWN_TIMEOUT_SECONDS)
+            task.cancel()
+        # Awaited, not just requested: cancel() only schedules the CancelledError,
+        # and a task torn down while the services below are closing would raise
+        # from inside a buffer or client that has already gone.
+        await asyncio.gather(*pending, return_exceptions=True)
 
     # After the pipelines have stopped, so nothing is mid-inference, and before
     # the services below — a backend holding something outside the interpreter
@@ -130,7 +140,6 @@ async def run(config_dir: str) -> None:
     registry.close()
 
     log.info("stopping background services...")
-    await health.stop()
     await ingest.stop()
     await notifier.stop()
     await buffer.stop()

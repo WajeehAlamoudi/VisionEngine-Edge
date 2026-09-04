@@ -104,6 +104,27 @@ class CameraRuntime(ABC):
         Raises SourceUnavailable when the source produced nothing.
         """
 
+    def request_stop(self) -> None:
+        """
+        Ask a read that is already blocked to return. Called from another
+        thread than the one inside read().
+
+        Default is to do nothing, which is right for any runtime whose read
+        returns within a frame period on its own — waiting that long is not
+        worth a concurrent call into a library that may not expect one.
+
+        A runtime whose read can block for much longer overrides this, and is
+        responsible for choosing something its own library documents as safe
+        to call concurrently. close() is NOT that: releasing a source while a
+        read is using it is exactly the race this exists to avoid.
+        """
+        return
+
     def close(self) -> None:
-        """Release the source. Safe to call twice, and after a failed open()."""
+        """
+        Release the source. Safe to call twice, and after a failed open().
+
+        Called only from the loop's own thread, once it has left read() — not
+        as a way to interrupt one. See request_stop().
+        """
         return

@@ -618,6 +618,20 @@ class DeepStreamCameraRuntime(CameraRuntime):
             log.warning("camera '%s': %s: %s",
                         self._cam.id, message.src.get_name(), err)
 
+    def request_stop(self) -> None:
+        """
+        Return the pipeline to NULL so a pull already waiting comes back.
+
+        read() can sit in try-pull-sample for seconds, which is far longer than
+        a shutdown should take. A state change is the interruption GStreamer
+        documents as safe from another thread — unlike releasing the source,
+        which is what close() does and why that is not used here.
+        """
+        pipeline, gst = self._pipeline, self._gst
+        if pipeline is not None and gst is not None:
+            self._failed = self._failed or "stopped"
+            pipeline.set_state(gst.State.NULL)
+
     def close(self) -> None:
         if self._pipeline is not None:
             self._pipeline.set_state(self._gst.State.NULL)

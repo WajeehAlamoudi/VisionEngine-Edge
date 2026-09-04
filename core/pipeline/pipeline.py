@@ -94,16 +94,18 @@ class CameraPipeline:
         event until that returns. A camera that has gone quiet would hold
         shutdown until its read timed out, which is seconds per camera.
 
-        Closing the source is what releases it — a capture that is released, or
-        a GStreamer pipeline set back to NULL, makes the pending read return
-        rather than wait. close() is safe to call twice, so the loop's own
-        close in its finally block still runs.
+        request_stop() is what releases it, and is deliberately not close():
+        this runs on a different thread from the one inside read(), and
+        releasing a source while a read is using it is a race. Each runtime
+        decides what is safe to call concurrently, and a runtime whose read
+        returns promptly on its own does nothing at all here. Closing stays
+        with the loop, after it has left read().
         """
         self._stop.set()
         try:
-            self._runtime.close()
+            self._runtime.request_stop()
         except Exception:
-            log.debug("camera '%s': error closing source during stop",
+            log.debug("camera '%s': error interrupting the source during stop",
                       self._cam.id, exc_info=True)
 
     async def run(self) -> None:
