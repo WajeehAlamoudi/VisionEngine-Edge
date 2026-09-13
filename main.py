@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 
@@ -102,7 +103,7 @@ async def run(config_dir: str) -> None:
     tasks = [asyncio.create_task(p.run(), name=f"pipeline-{p._cam.id}") for p in pipelines]
 
     try:
-        await stop_event.wait()
+        await _supervise(tasks, stop_event)
     except KeyboardInterrupt:
         log.info("keyboard interrupt — shutting down")
 
@@ -132,19 +133,65 @@ async def run(config_dir: str) -> None:
         # from inside a buffer or client that has already gone.
         await asyncio.gather(*pending, return_exceptions=True)
 
-    # After the pipelines have stopped, so nothing is mid-inference, and before
-    # the services below — a backend holding something outside the interpreter
-    # (a GStreamer pipeline, a device handle) needs releasing explicitly rather
-    # than being left to process exit.
+    # Ahead of the model teardown, not after it. The cameras are down, so every
+    # detection that will ever exist is already in the buffer, and this is the
+    # last chance to deliver it before the process goes. Releasing GStreamer
+    # first would spend that chance waiting on something no row depends on.
+    log.info("flushing buffered rows...")
+    await ingest.stop()
+
+    # Nothing is mid-inference by now. A backend holding something outside the
+    # interpreter (a GStreamer pipeline, a device handle) needs releasing
+    # explicitly rather than being left to process exit.
     log.info("releasing models...")
     registry.close()
 
     log.info("stopping background services...")
-    await ingest.stop()
     await notifier.stop()
     await buffer.stop()
 
     log.info("shutdown complete")
+
+
+async def _supervise(tasks: list[asyncio.Task], stop_event: asyncio.Event) -> None:
+    """
+    Wait for shutdown, but notice a camera that stops before it arrives.
+
+    Waiting on stop_event alone is how a device ends up running blind: a task
+    that ends with an exception simply disappears, the process keeps going, and
+    the heartbeat keeps reporting a healthy node with no cameras on it. Every
+    ending is logged here, and once the last camera has gone there is nothing
+    left to stay up for, so the agent exits and lets the supervisor restart it.
+
+    Nothing is restarted in place. A camera loop already retries the failures it
+    can recover from; reaching here means it stopped for a reason that survives
+    a retry, and a clean process start clears far more state than re-running the
+    same coroutine would.
+    """
+    stop_waiter = asyncio.create_task(stop_event.wait(), name="stop-signal")
+    running = set(tasks)
+    try:
+        while running:
+            done, pending = await asyncio.wait(
+                {stop_waiter, *running}, return_when=asyncio.FIRST_COMPLETED)
+            if stop_waiter in done:
+                return
+
+            running = pending - {stop_waiter}
+            for task in done:
+                # exception() also marks it retrieved, which is what keeps
+                # asyncio from logging it again as never-consumed at exit.
+                exc = None if task.cancelled() else task.exception()
+                if exc is None:
+                    log.warning("%s ended on its own", task.get_name())
+                else:
+                    log.error("%s ended with an error: %r", task.get_name(), exc,
+                              exc_info=exc)
+            log.warning("%d camera pipeline(s) still running", len(running))
+
+        log.error("every camera pipeline has stopped — shutting down")
+    finally:
+        stop_waiter.cancel()
 
 
 # ── logging setup ─────────────────────────────────────────────────────────────
@@ -172,7 +219,42 @@ def main() -> None:
         help="path to config directory (default: config)",
     )
     args = parser.parse_args()
-    asyncio.run(run(args.config))
+
+    code = 0
+    try:
+        asyncio.run(run(args.config))
+    except KeyboardInterrupt:
+        # Only reachable where asyncio signal handlers are unavailable, and the
+        # shutdown inside run() has already happened by the time it lands here.
+        pass
+    except Exception:
+        log.exception("agent exited with an error")
+        code = 1
+
+    _exit_now(code)
+
+
+def _exit_now(code: int) -> None:
+    """
+    Leave without waiting for threads that are never coming back.
+
+    A camera abandoned at the shutdown timeout is still inside a blocking read
+    on a ThreadPoolExecutor worker, and those workers are not daemons:
+    concurrent.futures joins every one of them at interpreter exit. So the
+    process prints "shutdown complete", returns from asyncio.run, and then hangs
+    forever on a join nothing will release — still holding buffer.db and, until
+    the reporter was stopped, still telling the backend it was healthy. A second
+    agent started against that file then loses every camera to "database is
+    locked".
+
+    Skipping the join is safe here and nowhere else: this runs only after the
+    buffer has been flushed and closed, so all durable state is already on disk.
+    The log streams are flushed by hand because os._exit runs no atexit hooks.
+    """
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
 
 
 if __name__ == "__main__":
