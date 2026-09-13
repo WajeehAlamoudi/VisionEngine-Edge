@@ -185,15 +185,46 @@ class CameraPipeline:
                     self._cam.id, self.frames_processed, len(results),
                     [(r.class_name, round(r.confidence, 2)) for r in results] if results else "none",
                 )
-                await self._process(results, cap_ts, frame_w, frame_h)
+                # Everything below the read is bounded by a try: storage,
+                # alerting and snapshotting all reach outside this process, and
+                # a failure there says nothing about the camera. Letting one
+                # escape would end the task and take the camera off the device
+                # permanently — the loop that owns the stream must outlive a
+                # buffer write that could not commit.
+                try:
+                    await self._process(results, cap_ts, frame_w, frame_h)
+                except Exception as exc:
+                    self.last_error = f"processing failed: {exc}"
+                    log.error("camera '%s': %s", self._cam.id, self.last_error,
+                              exc_info=True)
+
                 self._report_throughput(time.time())
 
                 # A runtime that keeps frames on the GPU returns None; there is
                 # nothing for the collector to save in that case.
                 if self._collector and frame is not None:
-                    await self._collector.on_frame(self._cam.id, frame, results, cap_ts)
+                    try:
+                        await self._collector.on_frame(
+                            self._cam.id, frame, results, cap_ts)
+                    except Exception as exc:
+                        self.last_error = f"collector failed: {exc}"
+                        log.error("camera '%s': %s", self._cam.id, self.last_error,
+                                  exc_info=True)
 
             await loop.run_in_executor(executor, self._runtime.close)
+        except Exception as exc:
+            # Last line of defence. Nothing above should reach here, but an
+            # exception that escapes a camera task is invisible — the task ends,
+            # the process carries on, and the device keeps reporting healthy
+            # with no cameras running. Record it where HealthReporter can see
+            # it, and release the source before leaving.
+            self.last_error = f"pipeline stopped: {exc}"
+            log.exception("camera '%s': pipeline stopped unexpectedly", self._cam.id)
+            try:
+                await loop.run_in_executor(executor, self._runtime.close)
+            except Exception:
+                log.debug("camera '%s': error closing the source after a failure",
+                          self._cam.id, exc_info=True)
         finally:
             executor.shutdown(wait=False)
             log.info("camera '%s': stopped", self._cam.id)

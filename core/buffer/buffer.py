@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS buffer (
 )
 """
 
+# How long a write waits for another writer to release the database before
+# giving up. Only ever reached when something outside this process holds it.
+_BUSY_TIMEOUT_MS = 10_000
+
 _CREATE_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_status_created
 ON buffer (status, created_at)
@@ -54,6 +58,13 @@ class Buffer:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA synchronous=NORMAL")
+        # Wait for a lock instead of failing on it. The cameras share this one
+        # connection, so they cannot contend with each other — but a second
+        # agent process on the same buffer file can, and with the default
+        # timeout of 0 every write raises "database is locked" immediately.
+        # That is a misconfiguration, not a reason to lose a night of
+        # detections; wait it out and let the health report show the backlog.
+        await self._db.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         await self._db.execute(_CREATE_TABLE)
         await self._db.execute(_CREATE_INDEX)
         await self._db.commit()
@@ -73,6 +84,18 @@ class Buffer:
         """
         if not rows:
             return
+
+        # Checked here rather than left to sqlite3. Its own complaint is
+        # "Error binding parameter 0 - probably unsupported type", which names
+        # neither the column nor the value and sends you reading the INSERT
+        # instead of the caller that produced the row.
+        for r in rows:
+            if not isinstance(r.get("table"), str):
+                raise TypeError(
+                    f"buffer row has a non-string table name: "
+                    f"{r.get('table')!r} ({type(r.get('table')).__name__}) — row={r.get('row')!r}"
+                )
+
         now = time.time()
         await self._db.executemany(
             "INSERT INTO buffer (table_name, payload, status, created_at) "
