@@ -17,6 +17,13 @@ Usage:
   python tools/debug.py --mode zones     --source 0
   python tools/debug.py --mode zones     --source 0        --config config/
   python tools/debug.py --mode inference --camera cam-01   --config config/
+
+On a deployed device use the venv's interpreter, not system python3:
+
+  .venv/bin/python tools/debug.py --mode inference --camera cam-01
+
+inference mode builds the camera's real runtime, so it needs what the agent
+needs, and pyds in particular lives only in the venv.
 """
 from __future__ import annotations
 

@@ -66,6 +66,20 @@ Three modes for configuring and verifying a deployment before the pipeline runs.
 python3 tools/debug.py --mode <view|zones|inference> [options]
 ```
 
+On a deployed device, run it with the venv's interpreter instead — the same one
+the service uses:
+
+```bash
+/opt/visionengine/.venv/bin/python tools/debug.py --mode inference --camera cam-01
+```
+
+The tool loads the real runtime for that camera, so it needs the same packages
+the agent does, and several of them exist only inside the venv. `pyds` is the
+one that bites: it does not ship with DeepStream and is not on PyPI, so system
+`python3` never has it and a `deepstream` camera fails with
+`No module named 'pyds'` while the agent runs fine beside it. `ultralytics` and
+`boxmot` are in the venv for the same reason.
+
 | Flag | Default | Applies to | Purpose |
 |---|---|---|---|
 | `--mode` | *required* | all | `view` \| `zones` \| `inference` |
