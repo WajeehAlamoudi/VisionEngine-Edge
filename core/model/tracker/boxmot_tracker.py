@@ -4,9 +4,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
-import torch
 import yaml
-from boxmot.trackers.bbox.botsort import BotSort
 
 from core.config import ModelConfig
 from ..accelerator import resolve_accelerator
@@ -122,6 +120,14 @@ class BoxMotTracker(Tracker):
         self._ids = StableIdMap()
 
     def load(self) -> None:
+        # Imported here, not at module level, for the reason _import_reid_backend
+        # gives below: a device that runs another tracker entirely - DeepStream's
+        # nvtracker - has no boxmot and no torch installed, and a top-level
+        # import made core.model unimportable there. That took the debug tool and
+        # anything else touching the model layer down with it, on a device where
+        # this class was never going to be built.
+        from boxmot.trackers.bbox.botsort import BotSort
+
         self._name_to_idx = {name: i for i, name in enumerate(self._cfg.classes)}
         self._idx_to_name = {i: name for name, i in self._name_to_idx.items()}
 
@@ -153,6 +159,8 @@ class BoxMotTracker(Tracker):
         falls back to cpu when it is not - a CoreML detector still needs its
         ReID on cpu or cuda.
         """
+        import torch      # boxmot's dependency, not ours — see load()
+
         if requested == "auto":
             detector_accelerator = resolve_accelerator(self._cfg.accelerator)
             if detector_accelerator in _TORCH_DEVICES:
