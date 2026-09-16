@@ -84,7 +84,9 @@ def main() -> None:
         if source is None:
             log.error("provide --source or --camera + --config")
             sys.exit(1)
-        run_view(source)
+        # Named after the camera when one was given, so saved frames say which
+        # camera they came from rather than all being "capture".
+        run_view(source, args.camera or "capture")
 
     # ── zones mode ────────────────────────────────────────────────────────────
     elif args.mode == "zones":

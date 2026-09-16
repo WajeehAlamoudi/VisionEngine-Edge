@@ -10,11 +10,12 @@ from core.config.model import needs_model_runner
 from core.model import ModelRunner
 from core.model.detector import SourceUnavailable, build_camera_runtime
 from .overlay import draw_detections, draw_hud, draw_zones, draw_controls
+from .stream import save_frame
 
 log = logging.getLogger(__name__)
 
 CONTROLS = [
-    "Q - quit  |  Z - toggle zones  |  D - toggle detections",
+    "Q - quit  |  Z - toggle zones  |  D - toggle detections  |  S - save frame",
 ]
 
 
@@ -143,6 +144,10 @@ def run(cfg: AppConfig, camera_id: str, title: str = "VisionEngine - Inference")
             show_zones = not show_zones
         elif key == ord("d"):
             show_detections = not show_detections
+        elif key == ord("s"):
+            # last_frame, not frame: the latter carries the zones, boxes and HUD.
+            log.info("saved %s  (%dx%d)",
+                     save_frame(last_frame, camera_id), width, height)
 
     stream.close()
     cv2.destroyAllWindows()

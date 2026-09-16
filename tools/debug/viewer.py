@@ -6,22 +6,28 @@ import time
 import cv2
 
 from .overlay import draw_hud, draw_controls
-from .stream import CameraStream
+from .stream import CameraStream, save_frame
 
 log = logging.getLogger(__name__)
 
 CONTROLS = [
-    "Q - quit",
+    "Q - quit  |  S - save frame",
 ]
 
 
-def run(source: str | int, title: str = "VisionEngine - View") -> None:
-    """mode: view - raw stream with resolution and FPS display."""
+def run(source: str | int, name: str = "capture", title: str = "VisionEngine - View") -> None:
+    """
+    mode: view - raw stream with resolution and FPS display.
+
+    `name` prefixes any frame saved with S, so captures from several cameras
+    stay apart.
+    """
     stream = CameraStream(source)
     if not stream.open():
         return
 
-    log.info("stream ready  %dx%d  |  press Q to quit", stream.width, stream.height)
+    log.info("stream ready  %dx%d  |  Q to quit, S to save a frame",
+             stream.width, stream.height)
 
     fps = 0.0
     t_last = time.monotonic()
@@ -49,8 +55,14 @@ def run(source: str | int, title: str = "VisionEngine - View") -> None:
         draw_controls(frame, CONTROLS)
 
         cv2.imshow(title, frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == ord("q"):
             break
+        elif key == ord("s"):
+            # last_frame, not frame: the latter carries the HUD.
+            log.info("saved %s  (%dx%d)",
+                     save_frame(last_frame, name), stream.width, stream.height)
 
     stream.release()
     cv2.destroyAllWindows()

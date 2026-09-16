@@ -4,10 +4,35 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
+from pathlib import Path
 
 import cv2
 
 log = logging.getLogger(__name__)
+
+# Where saved frames land, relative to wherever the tool was run from.
+CAPTURE_DIR = "captures"
+
+
+def save_frame(frame, prefix: str = "capture", directory: str = CAPTURE_DIR) -> Path:
+    """
+    Write one frame to a timestamped JPEG and return where it went.
+
+    Pass the raw frame, never the one the overlay has been drawn on. These are
+    mostly taken to be uploaded as a camera's background image, and a capture
+    with the HUD and boxes burned into it is useless for that.
+
+    Saving from this tool also keeps the image the same size as the stream the
+    detections come from, which is what makes the normalised anchor points line
+    up with it. A still taken from a different stream of the same camera can
+    have a different aspect ratio, and then every point sits in the wrong place.
+    """
+    out = Path(directory)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{prefix}_{time.strftime('%Y%m%d-%H%M%S')}.jpg"
+    cv2.imwrite(str(path), frame)
+    return path.resolve()
 
 _RTSP_FFMPEG_FLAGS = [
     "-rtsp_transport",  "tcp",

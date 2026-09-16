@@ -106,7 +106,17 @@ Run this **first** on any new camera. Resolution here is what zone coordinates
 must be drawn against, and an RTSP URL that fails here will fail identically in
 the pipeline — with a much noisier log.
 
-`Q` quits.
+| Key | Action |
+|---|---|
+| `S` | Save the current frame to `captures/` |
+| `Q` | Quit |
+
+`S` writes the raw frame — no HUD, no overlay — at the stream's own resolution,
+named after `--camera` when one was given. That last part matters if the image
+is going to be a spatial map's background: detection coordinates are stored as
+fractions of the frame they were measured in, so a still from a *different*
+stream of the same camera can have a different aspect ratio and put every point
+in the wrong place. Capturing here avoids that by construction.
 
 ### `zones` mode
 
@@ -167,7 +177,10 @@ python3 tools/debug.py --mode inference --camera cam-01 --config config/
 |---|---|
 | `Z` | Toggle zone overlay |
 | `D` | Toggle detection overlay |
+| `S` | Save the current frame to `captures/` |
 | `Q` | Quit |
+
+`S` saves the raw frame, without the boxes or zones drawn on it.
 
 Startup logs the model, the camera's active classes, and its zone names — check
 those three lines before reading the overlay. This mode answers "is the model

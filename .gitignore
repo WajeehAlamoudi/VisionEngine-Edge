@@ -19,6 +19,7 @@ env/
 data/
 logs/
 collected/
+captures/
 health.json
 
 # Deployment config — contains credentials and device-specific values.
