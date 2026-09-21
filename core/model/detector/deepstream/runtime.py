@@ -105,15 +105,27 @@ def _describe_tracker(path: str) -> str:
         return 0
 
     dcf = flag("visualTrackerType") == 1
-    reid = flag("reidType") == 1
     motion = flag("stateEstimatorType") > 0
 
+    # Any non-zero reidType loads the ReID network — 1 uses it to match people
+    # frame to frame (NvDeepSORT), 2 to re-connect people who were lost, 3 both.
+    # Only 1 used to be recognised, so the NvDCF accuracy profile, which is 2,
+    # was reported as "no ReID network" while the engine was loaded and running.
+    reid_type = flag("reidType")
+    reid = {
+        1: "ReID association",
+        2: "ReID re-association",
+        3: "ReID association and re-association",
+    }.get(reid_type)
+
     if dcf and reid:
-        return "NvDCF + ReID (correlation filter and an appearance network)"
+        return f"NvDCF + {reid} (correlation filter and an appearance network)"
     if dcf:
         return "NvDCF (correlation filter, no ReID network)"
-    if reid:
+    if reid_type == 1:
         return "NvDeepSORT (appearance network, no correlation filter)"
+    if reid:
+        return f"{reid} (appearance network, no correlation filter)"
     if motion:
         return "NvSORT (motion only)"
     return "IOU (overlap only)"
