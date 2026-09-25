@@ -21,9 +21,14 @@ def enrich(
     """
     x1, y1, x2, y2 = inf.bbox
 
-    # anchor point — person = feet (bottom-center), everything else = bbox center
+    # Anchor point — person = feet (bottom-center), everything else = bbox center.
+    # A person close to the camera has their feet out of shot, so the box stops at
+    # the frame bottom and y2 becomes the edge itself — a point no zone contains,
+    # which tags the nearest people "unzoned" and hides them from any zoned rule.
+    # For a clipped box the center is the closest honest position.
     cx = (x1 + x2) / 2
-    cy = y2 if inf.class_name == "person" else (y1 + y2) / 2
+    feet_cut_off = frame_h and y2 >= frame_h - 1
+    cy = (y1 + y2) / 2 if feet_cut_off or inf.class_name != "person" else y2
 
     zone = assign_zone(cx, cy, cam.zones)
 
