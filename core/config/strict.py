@@ -138,6 +138,10 @@ class Reader:
 
     # ── readers ───────────────────────────────────────────────────────────────
 
+    def has(self, key: str) -> bool:
+        """Whether the key is present at all — for optional sections."""
+        return self._raw.get(key, _MISSING) is not _MISSING
+
     def section(self, key: str) -> "Reader":
         """A required nested mapping. Shares this reader's error list."""
         path = self._key_path(key)

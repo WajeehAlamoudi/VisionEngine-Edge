@@ -9,7 +9,7 @@ from .collection import CollectionConfig, parse as _parse_collection
 from .device import DeviceConfig, parse as _parse_device
 from .model import ModelConfig, parse_all as _parse_models
 from .notifications import NotificationsConfig, WebhookConfig, parse as _parse_notifications
-from .rule import RuleConfig, parse_all as _parse_rules
+from .rule import RuleConfig, RuleSchedule, parse_all as _parse_rules
 from .strict import ALL, ConfigError, load_section
 
 # re-export all dataclasses so callers only need: from core.config import XxxConfig
@@ -22,6 +22,7 @@ __all__ = [
     "ModelConfig",
     "NotificationsConfig", "WebhookConfig", "LogChannelConfig",
     "RuleConfig",
+    "RuleSchedule",
 ]
 
 from .api import IngestConfig, BufferConfig, RequestConfig

@@ -194,6 +194,25 @@ Cooldown is keyed on `(rule, camera, zone)`, **not** on `track_id` — see
 [DATA_MODEL](DATA_MODEL.md#detections-vs-notifications) for why that decides how
 you count people.
 
+An optional `schedule` limits a rule to a time of day, in **UTC** like every
+other timestamp here:
+
+```yaml
+    schedule:
+      after: "19:30"    # 22:30 in Riyadh (UTC+3)
+      before: "02:00"   # 05:00 next morning
+```
+
+`after` later than `before` crosses midnight, which is how a night window is
+written — unlike `collection.yaml`, whose schedule rejects that. Both keys are
+required together and equal values are refused. Omit the block and the rule runs
+all day, as before.
+
+Remember the filter is also the storage gate: **outside its window a scheduled
+rule matches nothing**, so detections covered only by that rule are discarded
+rather than merely left un-notified. Keep an all-day `notify: false` rule
+alongside it if the data matters during the day.
+
 ### `notifications.yaml` — delivery only
 
 Where an alert that **already fired** is delivered. It cannot cause or suppress

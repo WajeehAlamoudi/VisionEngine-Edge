@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 
 from core.config import RuleConfig
 from core.config.strict import ALL
 from .types import DetectionEvent, RuleMatch
 
 log = logging.getLogger(__name__)
+
+
+def _now_hhmm() -> str:
+    """Current time of day in UTC, matching how rule schedules are written."""
+    return datetime.now(timezone.utc).strftime("%H:%M")
 
 
 class RulesEngine:
@@ -41,6 +47,8 @@ class RulesEngine:
             if rule.class_name != ALL and rule.class_name != event.class_name:
                 continue
             if rule.zones and event.zone not in rule.zones:
+                continue
+            if rule.schedule and not rule.schedule.contains(_now_hhmm()):
                 continue
             if rule.min_confidence is not None and event.confidence < rule.min_confidence:
                 continue

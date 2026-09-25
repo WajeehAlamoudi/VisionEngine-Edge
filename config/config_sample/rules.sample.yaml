@@ -60,6 +60,17 @@ rules:
   #                         Placeholders: {class}, {zone}, {camera}, {confidence}
   #
   #   enabled               false → rule is ignored completely (not used for filtering either)
+  #
+  #   schedule              Optional. Limits the rule to a time-of-day window, in UTC like
+  #                         every timestamp in the system. Omit it and the rule runs all day.
+  #                           after   HH:MM — window opens
+  #                           before  HH:MM — window closes
+  #                         after > before crosses midnight: "19:30 to 02:00" is one night.
+  #                         Both keys are required together; equal values are rejected.
+  #                         Remember this is the STORAGE gate too — outside the window the
+  #                         rule matches nothing, so detections only that rule covers are
+  #                         discarded, not merely left un-notified. Pair a scheduled alert
+  #                         with an all-day filter-only rule if you want the data kept.
 
 
   # ── filter-only rules (notify: false) ───────────────────────────────────────
@@ -132,6 +143,26 @@ rules:
     notifications_table: "notifications"
     message: "Truck detected on {camera} in {zone}"
     enabled: true
+
+
+  # ── scheduled rule — only outside working hours ──────────────────────────────
+  # Times are UTC. For a shop in Riyadh (UTC+3) closing at 21:00 local, a window
+  # of 22:30-05:00 local is written as 19:30-02:00 UTC.
+
+  - name: after_hours_back_door
+    class: person
+    cameras: [cam-07]
+    zones: [back_door]
+    min_confidence: 0.50           # higher floor: a false alarm at 3am costs trust
+    cooldown_seconds: 120          # one intruder should not fire hundreds of alerts
+    notify: true
+    severity: critical
+    notifications_table: "notifications"
+    message: "Person at the back door after hours ({confidence})"
+    enabled: true
+    schedule:
+      after: "19:30"               # 22:30 Riyadh
+      before: "02:00"              # 05:00 Riyadh, next day
 
 
   # ── disabled rule (preserved for future use) ─────────────────────────────────
