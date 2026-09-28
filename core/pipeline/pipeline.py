@@ -129,13 +129,19 @@ class CameraPipeline:
                 await loop.run_in_executor(executor, self._runtime.open)
             except Exception as exc:
                 self.last_error = f"failed to open source: {exc}"
-                log.error("camera '%s': %s", self._cam.id, self.last_error)
+                log.error("camera '%s': %s — reconnecting in %.0fs",
+                          self._cam.id, self.last_error, self._retry_delay(1))
                 # close() even though open() failed: it may have got far enough
                 # to hold something — a GStreamer pipeline can reach PLAYING and
                 # then time out waiting for video, and would otherwise keep the
                 # connection and the decoder session until the process exits.
                 await loop.run_in_executor(executor, self._runtime.close)
-                return
+                # A camera that is down at start is the same camera as one that
+                # drops a minute later, and is waited for the same way. Giving up
+                # here instead cost a camera the whole run over a restart that
+                # happened while it was rebooting.
+                if await self._reconnect(loop, executor, 1) < 0:
+                    return
 
             frame_w, frame_h = self._runtime.frame_size
             log.info("camera '%s': stream ready  %dx%d", self._cam.id, frame_w, frame_h)
