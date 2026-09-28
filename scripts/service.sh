@@ -51,17 +51,24 @@ cmd_install() {
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=VisionEngine Edge Agent
-After=network.target
-StartLimitIntervalSec=60
-StartLimitBurst=5
+# network-online, not network: on WiFi the interface exists long before it has
+# an address, and every camera fails to open in that gap.
+After=network-online.target
+Wants=network-online.target
+# 20 restarts in 5 minutes at RestartSec=15 — enough to ride out a router
+# that boots slower than the Jetson, while still catching a genuine crash loop.
+StartLimitIntervalSec=300
+StartLimitBurst=20
 
 [Service]
 Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$PYTHON main.py
-Restart=on-failure
-RestartSec=5
+# always, not on-failure: losing the cameras is exactly when a restart is
+# wanted, and RestartSec gives a slow network time to arrive.
+Restart=always
+RestartSec=15
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=$SERVICE_NAME

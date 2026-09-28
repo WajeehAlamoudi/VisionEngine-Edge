@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 _SHUTDOWN_TIMEOUT_SECONDS = 10
 
 
-async def run(config_dir: str) -> None:
+async def run(config_dir: str) -> int:
     cfg = load_config(config_dir)
 
     _setup_logging(cfg.device.log_level)
@@ -38,7 +38,7 @@ async def run(config_dir: str) -> None:
 
     if not cfg.enabled_cameras:
         log.error("no enabled cameras in cameras.yaml — nothing to run")
-        return
+        return 1
 
     # ── initialise components ─────────────────────────────────────────────────
 
@@ -102,8 +102,13 @@ async def run(config_dir: str) -> None:
 
     tasks = [asyncio.create_task(p.run(), name=f"pipeline-{p._cam.id}") for p in pipelines]
 
+    # Losing every camera is a failure, whatever the shutdown looks like from
+    # here. Exiting 0 would tell a supervisor the work is done and stop it
+    # restarting us, which is the opposite of what _supervise intends.
+    exit_code = 0
     try:
-        await _supervise(tasks, stop_event)
+        if not await _supervise(tasks, stop_event):
+            exit_code = 1
     except KeyboardInterrupt:
         log.info("keyboard interrupt — shutting down")
 
@@ -151,9 +156,10 @@ async def run(config_dir: str) -> None:
     await buffer.stop()
 
     log.info("shutdown complete")
+    return exit_code
 
 
-async def _supervise(tasks: list[asyncio.Task], stop_event: asyncio.Event) -> None:
+async def _supervise(tasks: list[asyncio.Task], stop_event: asyncio.Event) -> bool:
     """
     Wait for shutdown, but notice a camera that stops before it arrives.
 
@@ -175,7 +181,7 @@ async def _supervise(tasks: list[asyncio.Task], stop_event: asyncio.Event) -> No
             done, pending = await asyncio.wait(
                 {stop_waiter, *running}, return_when=asyncio.FIRST_COMPLETED)
             if stop_waiter in done:
-                return
+                return True
 
             running = pending - {stop_waiter}
             for task in done:
@@ -190,6 +196,7 @@ async def _supervise(tasks: list[asyncio.Task], stop_event: asyncio.Event) -> No
             log.warning("%d camera pipeline(s) still running", len(running))
 
         log.error("every camera pipeline has stopped — shutting down")
+        return False
     finally:
         stop_waiter.cancel()
 
@@ -222,7 +229,7 @@ def main() -> None:
 
     code = 0
     try:
-        asyncio.run(run(args.config))
+        code = asyncio.run(run(args.config))
     except KeyboardInterrupt:
         # Only reachable where asyncio signal handlers are unavailable, and the
         # shutdown inside run() has already happened by the time it lands here.
