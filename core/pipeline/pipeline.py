@@ -154,10 +154,14 @@ class CameraPipeline:
                         break
                     consecutive_errors += 1
                     self.last_error = str(exc)
-                    delay = self._retry_delay(consecutive_errors)
-                    log.warning("camera '%s': %s — retrying in %.0fs",
-                                self._cam.id, exc, delay)
-                    await asyncio.sleep(delay)
+                    log.warning("camera '%s': %s — reconnecting in %.0fs",
+                                self._cam.id, exc,
+                                self._retry_delay(consecutive_errors))
+                    consecutive_errors = await self._reconnect(
+                        loop, executor, consecutive_errors)
+                    if consecutive_errors < 0:
+                        break
+                    frame_w, frame_h = self._runtime.frame_size
                     continue
                 except Exception as exc:
                     if self._stop.is_set():
@@ -167,10 +171,14 @@ class CameraPipeline:
                     # loop would spin at full speed logging every iteration.
                     consecutive_errors += 1
                     self.last_error = str(exc)
-                    delay = self._retry_delay(consecutive_errors)
-                    log.error("camera '%s': inference error: %s — retrying in %.0fs",
-                              self._cam.id, exc, delay)
-                    await asyncio.sleep(delay)
+                    log.error("camera '%s': inference error: %s — reconnecting in %.0fs",
+                              self._cam.id, exc,
+                              self._retry_delay(consecutive_errors))
+                    consecutive_errors = await self._reconnect(
+                        loop, executor, consecutive_errors)
+                    if consecutive_errors < 0:
+                        break
+                    frame_w, frame_h = self._runtime.frame_size
                     continue
 
                 # Stamped after the read returns, not before it. read() absorbs
@@ -228,6 +236,35 @@ class CameraPipeline:
         finally:
             executor.shutdown(wait=False)
             log.info("camera '%s': stopped", self._cam.id)
+
+    async def _reconnect(self, loop, executor, attempt: int) -> int:
+        """
+        Wait out the backoff and open a new connection, staying here until the
+        camera answers or the loop is asked to stop.
+
+        Returns the failure count reached so the caller's backoff keeps growing,
+        or -1 to stop. A failed attempt does not go back to read(): reading is
+        what could not recover in the first place, and with no source open it
+        would raise about a missing pipeline and hide the camera that is
+        actually missing.
+        """
+        while True:
+            await asyncio.sleep(self._retry_delay(attempt))
+            if self._stop.is_set():
+                return -1
+            try:
+                await loop.run_in_executor(executor, self._runtime.reconnect)
+                # Cleared here, not left for the first detection to clear: a
+                # camera that sees nobody for an hour would keep reporting the
+                # failure it has already recovered from.
+                self.last_error = None
+                log.info("camera '%s': reconnected", self._cam.id)
+                return 0
+            except Exception as exc:
+                attempt += 1
+                self.last_error = f"reconnect failed: {exc}"
+                log.warning("camera '%s': reconnect failed: %s — retrying in %.0fs",
+                            self._cam.id, exc, self._retry_delay(attempt))
 
     @staticmethod
     def _retry_delay(consecutive_errors: int) -> float:

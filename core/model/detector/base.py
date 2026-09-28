@@ -120,6 +120,20 @@ class CameraRuntime(ABC):
         """
         return
 
+    def reconnect(self) -> None:
+        """
+        Drop the source and connect to it again. Raises like open() when the
+        camera is still unreachable.
+
+        A source that has died cannot be read back to life — the socket is gone
+        — so recovery is a new connection, not another read. close() then open()
+        is right for any runtime whose failure lives entirely in what close()
+        releases; one that keeps failure state outside that overrides this and
+        clears it first.
+        """
+        self.close()
+        self.open()
+
     def close(self) -> None:
         """
         Release the source. Safe to call twice, and after a failed open().

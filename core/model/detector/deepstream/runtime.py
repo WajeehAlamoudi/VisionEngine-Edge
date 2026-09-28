@@ -644,6 +644,20 @@ class DeepStreamCameraRuntime(CameraRuntime):
             self._failed = self._failed or "stopped"
             pipeline.set_state(gst.State.NULL)
 
+    def reconnect(self) -> None:
+        """
+        Clear what the old connection left behind, then connect again.
+
+        close() releases the pipeline but not the reasons it stopped. _linked
+        matters most: open() waits on it to know the source connected, so left
+        set from the last connection that wait returns at once and a stream that
+        never linked is reported as ready.
+        """
+        self._failed = None
+        self._link_error = None
+        self._linked.clear()
+        super().reconnect()
+
     def close(self) -> None:
         if self._pipeline is not None:
             self._pipeline.set_state(self._gst.State.NULL)
