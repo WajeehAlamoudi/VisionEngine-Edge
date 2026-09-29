@@ -28,6 +28,11 @@ _TRACKER_W, _TRACKER_H = 640, 384
 
 _PULL_TIMEOUT_NS = 5 * 1_000_000_000
 
+# GstRTSPLowerTrans, the transport bits rtspsrc understands. nvurisrcbin takes
+# the number rather than the enum, so the name lives here instead of at the
+# call site: 0x04 is TCP (media interleaved on the RTSP connection), 0x01 UDP.
+_RTP_OVER_TCP = 0x04
+
 # The source has to connect and the engines deserialise before the first frame
 # appears, which on a Jetson is seconds even with the engines already built.
 _OPEN_TIMEOUT_S = 60.0
@@ -405,6 +410,16 @@ class DeepStreamCameraRuntime(CameraRuntime):
         tracker = make("nvtracker") if self._tracking else None
 
         source.set_property("uri", self._source_uri())
+        # Carry the video inside the RTSP connection rather than in a UDP flow
+        # of its own, which is what the OpenCV runtime has always asked for.
+        # A separate flow is one more thing between here and the camera that can
+        # stop without saying so: at the store it crosses Wi-Fi and a router,
+        # and when three of them were dropped the control channels stayed up,
+        # so the pipelines simply starved - no end-of-stream, no error, nothing
+        # to recover from. On one connection a break is a break, and arrives as
+        # an error the loop can act on.
+        if _has_property(source, "select-rtp-protocol"):
+            source.set_property("select-rtp-protocol", _RTP_OVER_TCP)
         # Drop to fps_target here, ahead of the decoder, so the frames that are
         # not wanted cost nothing anywhere downstream.
         if self._drop_interval > 1 and _has_property(source, "drop-frame-interval"):
