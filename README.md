@@ -48,6 +48,7 @@ This README is the front door. The full guides live in **[`docs/`](docs/)**.
 | **[Deployment](docs/DEPLOYMENT.md)** | Backend → database → edge → dashboard, end to end |
 | **[Tools](docs/TOOLS.md)** | Running the agent, the debug tool, the service, reading the logs |
 | **[Stream recovery](docs/STREAM_RECOVERY.md)** | What happens when an RTSP stream drops and how the agent recovers |
+| **[Runtime stability](docs/RUNTIME_STABILITY.md)** | Which runtime a site should use, measured on real hardware, and the open ReID CUDA crash |
 
 ---
 
