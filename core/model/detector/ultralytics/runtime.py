@@ -43,6 +43,10 @@ _RTSP_OPTIONS = (
     "|probesize;50000000"
     "|analyzeduration;50000000"
     f"|stimeout;{_RTSP_SOCKET_TIMEOUT_US}"
+    # Both names on purpose: ffmpeg renamed stimeout to timeout, a build ignores
+    # the one it does not know, and sending only the old name leaves the socket
+    # unbounded — visible as timeout=0 in the URL ffmpeg logs.
+    f"|timeout;{_RTSP_SOCKET_TIMEOUT_US}"
 )
 
 

@@ -49,10 +49,10 @@ _TEARDOWN_TIMEOUT_S = 10.0
 # NVR reboot causes — is when it stops coming back.
 _TEARDOWN_LOCK = threading.Lock()
 
-# How long the probe may spend on a camera that is not answering. It runs on
-# every open(), reconnects included, so without a bound it replaces the hang in
-# close() rather than waiting behind it.
-_PROBE_TIMEOUT_MS = 5000
+# How long the probe may spend in total on a camera that is not answering. It
+# runs on the first open() of each camera, so without a bound an agent started
+# while the NVR is down never opens a camera and never says why.
+_PROBE_TIMEOUT_S = 15.0
 
 
 def _probe_source(source: str) -> tuple[int, int, float]:
@@ -78,13 +78,16 @@ def _probe_source(source: str) -> tuple[int, int, float]:
     """
     import cv2
 
-    # Opened in two steps so the timeouts are set before the connection is
-    # attempted: constructing with a URI connects immediately, and ffmpeg's
-    # default is to wait without limit for a camera that has gone away.
-    cap = cv2.VideoCapture()
-    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, _PROBE_TIMEOUT_MS)
-    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, _PROBE_TIMEOUT_MS)
-    cap.open(source, cv2.CAP_FFMPEG)
+    # The OpenCV runtime's opener rather than a bare capture: it puts the socket
+    # timeout in the environment variable OpenCV reads while building a capture,
+    # which is the only place ffmpeg takes it from. Set as a capture property it
+    # is ignored, and the URL ffmpeg logs still says timeout=0 while it waits.
+    from ..ultralytics.runtime import _open_capture
+
+    # That timeout bounds one read, not the probe: 120 of them at five seconds
+    # each is ten minutes inside an open() nothing can interrupt.
+    deadline = time.monotonic() + _PROBE_TIMEOUT_S
+    cap = _open_capture(source)
     try:
         if not cap.isOpened():
             raise RuntimeError(f"cannot open {source} to read its resolution")
@@ -99,6 +102,8 @@ def _probe_source(source: str) -> tuple[int, int, float]:
             ok, frame = cap.read()
             if ok and frame is not None and frame.size > 0:
                 return frame.shape[1], frame.shape[0], fps
+            if time.monotonic() > deadline:
+                break
 
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -319,12 +324,20 @@ class DeepStreamCameraRuntime(CameraRuntime):
 
         # Before the pipeline exists: nvstreammux needs its output size at
         # build time, not once the source has connected.
-        probe_target = uri if not uri.startswith("file://") else str(self._cam.source)
-        width, height, source_fps = _probe_source(probe_target)
-        self._size = (width, height)
-        self._plan_rate(source_fps)
-        log.info("camera '%s': source is %dx%d @ %s fps", self._cam.id, width, height,
-                 f"{source_fps:.0f}" if source_fps else "unknown")
+        #
+        # Once per process. The probe is a second connection to the camera, and
+        # on a reconnect it is a connection to one that has just stopped
+        # answering — asking a dead camera a question already answered at
+        # startup, and blocking the recovery on the reply. A sub-stream does not
+        # change size or rate while the agent runs, so reconnects reuse them.
+        source_fps = 0.0
+        if self._size == (0, 0):
+            probe_target = uri if not uri.startswith("file://") else str(self._cam.source)
+            width, height, source_fps = _probe_source(probe_target)
+            self._size = (width, height)
+            self._plan_rate(source_fps)
+            log.info("camera '%s': source is %dx%d @ %s fps", self._cam.id, width, height,
+                     f"{source_fps:.0f}" if source_fps else "unknown")
         if source_fps and self._cam.fps_target:
             kept = source_fps / self._drop_interval
             if self._gate_source:

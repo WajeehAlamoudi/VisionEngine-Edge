@@ -210,9 +210,40 @@ process-wide lock so one pipeline unwinds at a time, and does all of it on a
 thread it waits on for ten seconds. Past that it gives up, logs, and returns —
 `open()` builds a new pipeline and the old one is left to its stuck thread.
 
-The probe is bounded for the same reason. It runs on every `open()`, so an
-unbounded `cv2.VideoCapture` against a camera that has just stopped answering
-would only move the hang from `close()` to the line after it.
+### 5. The probe stops running on the reconnect path
+
+Fixing the teardown moved the hang one line down, into `open()`:
+
+```
+14:46:38  camera 'cam-01': DeepStream pipeline stopped     ← close() returned in 2s
+          ...nothing
+```
+
+The line that never follows is the probe's own `source is 960x576 @ 12 fps`.
+`open()` starts by opening a **second** connection to the camera, purely to read
+its resolution, because `nvstreammux` needs its output size before the source
+connects. Against a camera that has just gone away that connection waits, and
+ffmpeg names the reason itself:
+
+```
+[tcp @ ...] Connection to tcp://192.168.100.46:554?timeout=0 failed
+```
+
+On a reconnect that connection asks a dead camera a question already answered at
+startup, so it now runs only when the size is still unknown — once per camera
+per process. A sub-stream does not change resolution or frame rate while the
+agent runs.
+
+That leaves the first open of each camera, which still probes. Two bounds cover
+it. The capture goes through `_open_capture()` from the OpenCV runtime, which
+puts the socket timeout in `OPENCV_FFMPEG_CAPTURE_OPTIONS` — the only place
+ffmpeg reads it from, and under both `stimeout` and `timeout`, since ffmpeg
+renamed it and ignores the name it does not know. And the decode loop carries a
+total deadline, because a socket timeout bounds one read: 120 reads at five
+seconds each is ten minutes inside an `open()` that nothing can interrupt.
+
+Whether the socket bound took effect is readable without waiting for a camera to
+die — that URL must say `timeout=5000000`.
 
 Abandoning a pipeline leaks its socket and decoder context until the process
 restarts. One per camera per drop — four for an NVR reboot, nothing after that,
