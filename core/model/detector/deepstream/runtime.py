@@ -349,15 +349,18 @@ class DeepStreamCameraRuntime(CameraRuntime):
                      kept, self._cam.fps_target)
 
         Gst = self._gst
+        log.info("camera '%s': building DeepStream pipeline", self._cam.id)
         self._pipeline = self._build()
         self._bus = self._pipeline.get_bus()
 
+        log.info("camera '%s': starting DeepStream pipeline", self._cam.id)
         if self._pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
             self._check_bus()
             raise RuntimeError("pipeline refused to start (GST_DEBUG=3 for the element)")
 
         # nvurisrcbin exposes its pad only once it has connected and identified
         # the stream, so the source resolution is not known until then.
+        log.info("camera '%s': waiting for DeepStream source to link", self._cam.id)
         if not self._linked.wait(_OPEN_TIMEOUT_S):
             self._check_bus()
             # The callback records why it gave up, since an exception raised
@@ -693,7 +696,18 @@ class DeepStreamCameraRuntime(CameraRuntime):
         pipeline, gst = self._pipeline, self._gst
         if pipeline is not None and gst is not None:
             self._failed = self._failed or "stopped"
-            pipeline.set_state(gst.State.NULL)
+            # This is called from asyncio's event-loop thread. A native state
+            # transition can block in the decoder driver, so issue it from a
+            # daemon thread and let main's bounded shutdown continue instead of
+            # freezing heartbeat and preventing systemd recovery.
+            def interrupt() -> None:
+                try:
+                    pipeline.set_state(gst.State.NULL)
+                except Exception:
+                    log.debug("camera '%s': error interrupting DeepStream", self._cam.id,
+                              exc_info=True)
+
+            threading.Thread(target=interrupt, name=f"stop-{self._cam.id}", daemon=True).start()
 
     def reconnect(self) -> None:
         """
@@ -744,7 +758,7 @@ class DeepStreamCameraRuntime(CameraRuntime):
         threading.Thread(target=drop, name=f"teardown-{self._cam.id}",
                          daemon=True).start()
         if done.wait(_TEARDOWN_TIMEOUT_S):
-            log.info("camera '%s': DeepStream pipeline stopped", self._cam.id)
+            log.info("camera '%s': DeepStream teardown state calls returned", self._cam.id)
         else:
             log.warning("camera '%s': pipeline did not stop within %.0fs — "
                         "abandoning it", self._cam.id, _TEARDOWN_TIMEOUT_S)

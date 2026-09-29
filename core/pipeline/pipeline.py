@@ -11,7 +11,7 @@ from core.config import CameraConfig
 from core.ingest import IngestWorker
 from core.notifier import Notifier
 from core.rules import RulesEngine
-from core.model.detector import CameraRuntime, SourceUnavailable
+from core.model.detector import CameraRuntime, SourceUnavailable, UnrecoverableCameraRuntime
 from .enricher import enrich
 from .rows import _utcnow, detection_row, notification_row
 
@@ -28,6 +28,12 @@ _FPS_LOG_INTERVAL = 10.0
 # minute instead of continuously.
 _RETRY_BASE_SECONDS = 2.0
 _RETRY_MAX_SECONDS = 60.0
+
+# DeepStream normally links within its own 60-second source timeout. If its
+# native start call itself never returns, the camera's sole worker is occupied
+# forever and Python cannot safely kill it. Leave the process for systemd to
+# recreate the CUDA/GStreamer state instead of silently leaving it blind.
+_NATIVE_OPERATION_TIMEOUT_SECONDS = 90.0
 
 
 class CameraPipeline:
@@ -126,7 +132,9 @@ class CameraPipeline:
 
         try:
             try:
-                await loop.run_in_executor(executor, self._runtime.open)
+                await self._native_call(loop, executor, self._runtime.open, "initial open")
+            except UnrecoverableCameraRuntime:
+                raise
             except Exception as exc:
                 self.last_error = f"failed to open source: {exc}"
                 log.error("camera '%s': %s — reconnecting in %.0fs",
@@ -226,6 +234,10 @@ class CameraPipeline:
                                   exc_info=True)
 
             await loop.run_in_executor(executor, self._runtime.close)
+        except UnrecoverableCameraRuntime:
+            # The camera worker is trapped in native code. Do not call close()
+            # concurrently with it: _supervise will restart this process.
+            raise
         except Exception as exc:
             # Last line of defence. Nothing above should reach here, but an
             # exception that escapes a camera task is invisible — the task ends,
@@ -259,18 +271,33 @@ class CameraPipeline:
             if self._stop.is_set():
                 return -1
             try:
-                await loop.run_in_executor(executor, self._runtime.reconnect)
+                await self._native_call(loop, executor, self._runtime.reconnect, "reconnect")
                 # Cleared here, not left for the first detection to clear: a
                 # camera that sees nobody for an hour would keep reporting the
                 # failure it has already recovered from.
                 self.last_error = None
                 log.info("camera '%s': reconnected", self._cam.id)
                 return 0
+            except UnrecoverableCameraRuntime:
+                raise
             except Exception as exc:
                 attempt += 1
                 self.last_error = f"reconnect failed: {exc}"
                 log.warning("camera '%s': reconnect failed: %s — retrying in %.0fs",
                             self._cam.id, exc, self._retry_delay(attempt))
+
+    async def _native_call(self, loop, executor, operation, stage: str):
+        """Run one native operation or escalate a call Python cannot cancel."""
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(executor, operation),
+                timeout=_NATIVE_OPERATION_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            raise UnrecoverableCameraRuntime(
+                f"{stage} did not return within {_NATIVE_OPERATION_TIMEOUT_SECONDS:.0f}s; "
+                "native DeepStream/CUDA state is wedged"
+            ) from exc
 
     @staticmethod
     def _retry_delay(consecutive_errors: int) -> float:

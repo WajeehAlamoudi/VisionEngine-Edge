@@ -13,7 +13,7 @@ from core.config import load_config
 from core.health import HealthReporter
 from core.ingest import IngestWorker
 from core.model import ModelRegistry
-from core.model.detector import build_camera_runtime
+from core.model.detector import UnrecoverableCameraRuntime, build_camera_runtime
 from core.notifier import Notifier
 from core.pipeline import CameraPipeline
 from core.rules import RulesEngine
@@ -190,6 +190,11 @@ async def _supervise(tasks: list[asyncio.Task], stop_event: asyncio.Event) -> bo
                 exc = None if task.cancelled() else task.exception()
                 if exc is None:
                     log.warning("%s ended on its own", task.get_name())
+                elif isinstance(exc, UnrecoverableCameraRuntime):
+                    # A live CUDA/GStreamer call cannot be killed from Python.
+                    # Restarting the process is the only clean resource reset.
+                    log.critical("%s has a wedged native camera call: %s", task.get_name(), exc)
+                    return False
                 else:
                     log.error("%s ended with an error: %r", task.get_name(), exc,
                               exc_info=exc)

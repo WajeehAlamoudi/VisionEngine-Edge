@@ -16,6 +16,15 @@ class SourceUnavailable(Exception):
     """
 
 
+class UnrecoverableCameraRuntime(RuntimeError):
+    """A native camera call is wedged and this process must be restarted.
+
+    Python cannot safely cancel a thread stuck inside a CUDA, GStreamer, or
+    driver call. Retrying on that thread would only queue work behind the call
+    that never returns, so the process supervisor is the recovery boundary.
+    """
+
+
 class Detector(ABC):
     """
     Stateless, detection-only backend. Safe to share between cameras that use
