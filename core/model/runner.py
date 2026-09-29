@@ -37,10 +37,19 @@ class ModelRunner:
             self._tracker.load()
 
     def run(self, frame, active_classes: list[str]) -> list[InferenceResult]:
-        detections = self._detector.infer(frame, active_classes)
+        # These are separate GPU workloads.  Keep their failure boundaries in
+        # the error text: a CUDA failure is asynchronous, and without this a
+        # camera loop can only report the unhelpful combined label "inference".
+        try:
+            detections = self._detector.infer(frame, active_classes)
+        except Exception as exc:
+            raise RuntimeError(f"detector inference failed: {exc}") from exc
         if self._tracker is None:
             return detections
-        return self._tracker.update(frame, detections)
+        try:
+            return self._tracker.update(frame, detections)
+        except Exception as exc:
+            raise RuntimeError(f"tracker/ReID update failed: {exc}") from exc
 
     def close(self) -> None:
         """Release the detector's resources. Safe to call more than once."""
