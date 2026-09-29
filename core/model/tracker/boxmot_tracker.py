@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +49,11 @@ _REID_BACKENDS_REQUIRING_INSTALL = ("onnx", "openvino", "tflite", "torchscript")
 # runs ReID.
 _TORCH_DEVICES = ("cpu", "cuda", "mps")
 
+# BoxMot tracker instances are per camera, but TensorRT ReID calls ultimately
+# share one CUDA context in this process. Serialize only the tracker/ReID call;
+# capture and detector inference remain independent per camera.
+_TENSORRT_REID_LOCK = threading.Lock()
+
 
 def _skip_dependency_install(*_args, **_kwargs) -> tuple:
     """Stand-in for boxmot's ReID dependency auto-installer. Installs nothing."""
@@ -80,7 +86,25 @@ def _import_reid_backend(name: str):
         # tensorrt is genuinely missing, the ImportError inside load_model is
         # the correct failure - a clear message rather than a broken install.
         tensorrt_backend.ensure_reid_backend_requirements = _skip_dependency_install
-        return tensorrt_backend.TensorRTBackend
+
+        class SingleLoadTensorRTBackend(tensorrt_backend.TensorRTBackend):
+            """Avoid BoxMot loading the same TensorRT engine twice per tracker."""
+
+            def __init__(self, *args, **kwargs):
+                # BaseModelBackend.__init__ dynamically invokes load_model(),
+                # then TensorRTBackend.__init__ invokes it again. The first call
+                # creates a complete, discarded engine/context. Skip only that
+                # base call; the TensorRT backend's own call still does the load.
+                self._skip_base_load = True
+                super().__init__(*args, **kwargs)
+
+            def load_model(self, weights):
+                if self._skip_base_load:
+                    self._skip_base_load = False
+                    return
+                return super().load_model(weights)
+
+        return SingleLoadTensorRTBackend
     raise RuntimeError(f"unsupported reid_backend '{name}'")
 
 
@@ -118,6 +142,7 @@ class BoxMotTracker(Tracker):
         # lifetime. Shared with the tracking detector backends so every
         # track_id written to the detections table has the same shape.
         self._ids = StableIdMap()
+        self._uses_tensorrt_reid = False
 
     def load(self) -> None:
         # Imported here, not at module level, for the reason _import_reid_backend
@@ -144,6 +169,7 @@ class BoxMotTracker(Tracker):
             params["reid_model"] = self._build_reid(
                 reid_weights, reid_backend, reid_device, reid_half
             )
+            self._uses_tensorrt_reid = reid_backend == "tensorrt"
 
         self._tracker = BotSort(**params)
         log.info(
@@ -244,7 +270,11 @@ class BoxMotTracker(Tracker):
                 for d in detections
             ], dtype=np.float32)
 
-        tracks = self._tracker.update(dets, frame)
+        if self._uses_tensorrt_reid:
+            with _TENSORRT_REID_LOCK:
+                tracks = self._tracker.update(dets, frame)
+        else:
+            tracks = self._tracker.update(dets, frame)
 
         out: list[InferenceResult] = []
         for xyxy, track_id, conf, cls_idx in zip(tracks.xyxy, tracks.id, tracks.conf, tracks.cls):
