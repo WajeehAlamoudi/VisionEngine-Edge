@@ -296,20 +296,12 @@ class DeepStreamCameraRuntime(CameraRuntime):
 
         # Before the pipeline exists: nvstreammux needs its output size at
         # build time, not once the source has connected.
-        #
-        # Once only. The probe is a second connection to the same camera, and
-        # on a reconnect that is a connection to a camera that has just stopped
-        # answering — it blocked for minutes and held the retry loop that was
-        # trying to reach it. The size and rate of a sub-stream do not change
-        # while the agent runs, so reconnects reuse what the first open learned.
-        source_fps = 0.0
-        if self._size == (0, 0):
-            probe_target = uri if not uri.startswith("file://") else str(self._cam.source)
-            width, height, source_fps = _probe_source(probe_target)
-            self._size = (width, height)
-            self._plan_rate(source_fps)
-            log.info("camera '%s': source is %dx%d @ %s fps", self._cam.id, width, height,
-                     f"{source_fps:.0f}" if source_fps else "unknown")
+        probe_target = uri if not uri.startswith("file://") else str(self._cam.source)
+        width, height, source_fps = _probe_source(probe_target)
+        self._size = (width, height)
+        self._plan_rate(source_fps)
+        log.info("camera '%s': source is %dx%d @ %s fps", self._cam.id, width, height,
+                 f"{source_fps:.0f}" if source_fps else "unknown")
         if source_fps and self._cam.fps_target:
             kept = source_fps / self._drop_interval
             if self._gate_source:
