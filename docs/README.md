@@ -13,7 +13,7 @@
 
 <br/>
 
-[![Docs](https://img.shields.io/badge/Docs-5%20guides-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](.)
+[![Docs](https://img.shields.io/badge/Docs-6%20guides-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](.)
 [![Scope](https://img.shields.io/badge/Scope-Edge%20agent-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](../README.md)
 [![Status](https://img.shields.io/badge/Status-Production-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](DEPLOYMENT.md)
 
@@ -47,6 +47,7 @@ more importantly, what each one actually means.
 | **[DATA_MODEL](DATA_MODEL.md)** | Every column of `detections`, `notifications`, `nodes`, `dashboard_config` | Writing SQL or a widget |
 | **[DEPLOYMENT](DEPLOYMENT.md)** | Backend → database → edge → dashboard, end to end | Standing up a new device or branch |
 | **[TOOLS](TOOLS.md)** | Running the agent, the debug tool, the service, reading the logs | Operating or troubleshooting a device |
+| **[STREAM_RECOVERY](STREAM_RECOVERY.md)** | What a lost RTSP stream does to the pipeline, how it recovers, and the network path behind it | A camera goes dark, or a site is on Wi-Fi |
 
 ---
 
@@ -65,6 +66,8 @@ more importantly, what each one actually means.
         │
         ├── DEPLOYMENT     how to stand it up
         └── TOOLS          how to operate it
+               │
+               └── STREAM_RECOVERY   ← when a camera stops answering
 ```
 
 ---
@@ -81,6 +84,7 @@ gets updated. Each fact here has exactly one home:
 | A column's meaning and how to aggregate it | [DATA_MODEL](DATA_MODEL.md) | DEPLOYMENT |
 | The DDL to create the tables | [DEPLOYMENT](DEPLOYMENT.md) § Stage 2 | DATA_MODEL |
 | Why a backend or threshold was chosen | [ARCHITECTURE](ARCHITECTURE.md) | Code comments |
+| How a camera recovers from a dropped stream, and the transport it uses | [STREAM_RECOVERY](STREAM_RECOVERY.md) | ARCHITECTURE |
 | A command you type | [TOOLS](TOOLS.md) or [DEPLOYMENT](DEPLOYMENT.md) | Both |
 
 Cross-reference with a link instead of repeating the text.
