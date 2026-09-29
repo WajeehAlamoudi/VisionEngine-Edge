@@ -14,7 +14,7 @@
 <br/>
 
 [![Transport](https://img.shields.io/badge/Transport-RTP%20over%20TCP-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](#3-rtp-over-tcp)
-[![Recovery](https://img.shields.io/badge/Recovery-reconnect%2C%202s→60s-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](#1-reconnect-instead-of-re-reading)
+[![Recovery](https://img.shields.io/badge/Recovery-retry%20%2B%20safe%20fallback-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](#1-reconnect-instead-of-re-reading)
 [![Incident](https://img.shields.io/badge/Incident-28%20Sep%202026-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](#what-happened)
 
 <br/>
@@ -204,11 +204,16 @@ all correct and all unreachable, which is why the failure looked like missing
 retry logic. `request_stop()` calls the same blocking transition from the event
 loop, so a camera that cannot be torn down also stalls shutdown.
 
-`close()` now takes the pipeline off the runtime before touching it, flushes the
+`close()` takes the pipeline off the runtime before touching it, flushes the
 bus, steps `PAUSED → READY → NULL` rather than jumping to NULL, holds a
-process-wide lock so one pipeline unwinds at a time, and does all of it on a
-thread it waits on for ten seconds. Past that it gives up, logs, and returns —
-`open()` builds a new pipeline and the old one is left to its stuck thread.
+process-wide lock so one pipeline unwinds at a time, and performs that work on
+a helper thread with a ten-second wait. The helper's completion means its state
+calls returned; it does **not** prove the NVIDIA decoder and tracker have fully
+released their native resources.
+
+Past that wait the helper is left to whatever it is stuck in, and `open()`
+builds a new pipeline. The abandoned one keeps its socket and decoder context
+until the process ends, which is the §6 fallback's job to bound.
 
 ### 5. The probe stops running on the reconnect path
 
@@ -245,10 +250,40 @@ seconds each is ten minutes inside an `open()` that nothing can interrupt.
 Whether the socket bound took effect is readable without waiting for a camera to
 die — that URL must say `timeout=5000000`.
 
-Abandoning a pipeline leaks its socket and decoder context until the process
-restarts. One per camera per drop — four for an NVR reboot, nothing after that,
-since a later attempt has no pipeline left to release. That is the cost of a
-camera that recovers unattended.
+### 6. A wedged native reconnect has a process-level fallback
+
+The helper-thread teardown avoids an unbounded wait in the normal case, but it
+cannot cancel a GStreamer, CUDA, or driver call that is already stuck. Python
+cannot safely kill that one thread. If it remains occupied, its camera's
+one-worker executor cannot run another reconnect attempt.
+
+`CameraPipeline` therefore bounds the **entire** native `open()` or
+`reconnect()` operation at 90 seconds. This includes `close()`, not just the
+RTSP connection. If that deadline expires, the task reports a wedged native
+runtime and the main supervisor exits with status 1. The systemd unit has
+`Restart=always` and `RestartSec=15`, so it creates a fresh Edge process and a
+fresh CUDA/GStreamer state automatically.
+
+This is a fallback, not the normal recovery path:
+
+```
+stream drop → camera-local reconnect retries → success
+                                      │
+                         native call stuck for 90s
+                                      │
+                    service exits → systemd waits 15s → clean process starts
+```
+
+An ordinary dropped camera still reconnects in place and does not restart the
+service. A wedged native call restarts the **VisionEngine service**, not the
+Jetson operating system. Since the current design hosts all DeepStream cameras
+in one process, that fallback restarts all enabled cameras. The old process is
+gone before the new process starts, so it cannot retain the stale decoder or
+CUDA context.
+
+`request_stop()` also issues its GStreamer interruption from a daemon thread,
+not the asyncio event-loop thread. That keeps the controlled shutdown and the
+systemd fallback reachable even if the driver blocks the interruption call.
 
 ---
 
@@ -258,9 +293,11 @@ camera that recovers unattended.
 |---|---|
 | `... — reconnecting in 2s` | The stream just dropped. First failure |
 | `reconnect failed: ... — retrying in 4s` | Camera still unreachable; backoff growing to a 60s ceiling |
-| `pipeline did not stop within 10s — abandoning it` | The teardown hung; that pipeline is leaked and a new one is being built. Recovery continues |
+| `DeepStream teardown state calls returned` | The teardown helper returned from its state calls; native decoder/tracker cleanup may still be in progress |
+| `pipeline did not stop within 10s — abandoning it` | The helper is still inside a native call. That pipeline is left to it and a new one is built; recovery continues |
+| `... has a wedged native camera call: reconnect did not return within 90s` | A native operation cannot be cancelled safely; the process will exit so systemd can recreate it |
 | `camera 'X': reconnected` | New connection open, frames flowing, failure count reset |
-| `camera 'X': stream ready  960x576` | Resolution re-read after the reconnect |
+| `camera 'X': stream ready  960x576` | Initial connection is ready; reconnects retain the cached resolution instead of probing the camera again |
 | `failed to open source: ... — reconnecting in 2s` | Camera was down when the agent started; it is being waited for, not abandoned |
 
 A camera in the reconnect loop has `last_error` set, so the heartbeat counts it
@@ -291,7 +328,9 @@ journalctl -u visionengine-edge --utc -f | grep -iE "reconnect|stream ready"
 
 Unplug the camera or disable its channel on the NVR for 30 seconds, then restore
 it. Expect `reconnecting in 2s`, possibly a failed attempt or two, then
-`reconnected` and `stream ready`.
+`reconnected`. If the native reconnect wedges instead, expect the explicit
+90-second critical log, a systemd restart 15 seconds later, and a fresh
+`stream ready` after the camera is available.
 
 Timestamps — `journalctl` parses `--since` in local time and prints in UTC when
 given `--utc`, while the agent's own log lines are local and every database

@@ -47,6 +47,7 @@ This README is the front door. The full guides live in **[`docs/`](docs/)**.
 | **[Data Model](docs/DATA_MODEL.md)** | Every column of `detections`, `notifications`, `nodes` — and what it means |
 | **[Deployment](docs/DEPLOYMENT.md)** | Backend → database → edge → dashboard, end to end |
 | **[Tools](docs/TOOLS.md)** | Running the agent, the debug tool, the service, reading the logs |
+| **[Stream recovery](docs/STREAM_RECOVERY.md)** | What happens when an RTSP stream drops and how the agent recovers |
 
 ---
 
@@ -106,6 +107,7 @@ One pipeline per camera, each an independent task — a failing camera does not 
 - **Strict configuration** — no defaults anywhere; a missing or out-of-range key stops startup with the file, field, and expectation named
 - **Offline buffer** — SQLite WAL, survives network outages, replays with original capture timestamps
 - **Heartbeat** — device health rows pushed to `nodes`, plus an optional local health file
+- **Stream recovery** — camera-local reconnect retries, with an automatic systemd service restart if a native camera call wedges
 - **Dataset collection** — frame sampler with schedule, filters, and save modes
 - **Debug tool** — three live modes: view stream, draw zones, run inference overlay
 
