@@ -37,6 +37,23 @@ _RTP_OVER_TCP = 0x04
 # appears, which on a Jetson is seconds even with the engines already built.
 _OPEN_TIMEOUT_S = 60.0
 
+# Long enough for a pipeline whose camera is still answering, short enough that
+# a camera nobody can reach is given up on rather than waited for. Going to NULL
+# joins the streaming threads, and on this hardware that can never return: the
+# thread sits in the decoder's V4L2 teardown with the RTSP socket dead. Waiting
+# for it is what left a dropped camera dark until the process was restarted.
+_TEARDOWN_TIMEOUT_S = 10.0
+
+# One pipeline reaches NULL at a time. They share the decoder and CUDA contexts
+# the teardown releases, and four of them unwinding at once — which is what an
+# NVR reboot causes — is when it stops coming back.
+_TEARDOWN_LOCK = threading.Lock()
+
+# How long the probe may spend on a camera that is not answering. It runs on
+# every open(), reconnects included, so without a bound it replaces the hang in
+# close() rather than waiting behind it.
+_PROBE_TIMEOUT_MS = 5000
+
 
 def _probe_source(source: str) -> tuple[int, int, float]:
     """
@@ -61,7 +78,13 @@ def _probe_source(source: str) -> tuple[int, int, float]:
     """
     import cv2
 
-    cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+    # Opened in two steps so the timeouts are set before the connection is
+    # attempted: constructing with a URI connects immediately, and ffmpeg's
+    # default is to wait without limit for a camera that has gone away.
+    cap = cv2.VideoCapture()
+    cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, _PROBE_TIMEOUT_MS)
+    cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, _PROBE_TIMEOUT_MS)
+    cap.open(source, cv2.CAP_FFMPEG)
     try:
         if not cap.isOpened():
             raise RuntimeError(f"cannot open {source} to read its resolution")
@@ -674,7 +697,41 @@ class DeepStreamCameraRuntime(CameraRuntime):
         super().reconnect()
 
     def close(self) -> None:
-        if self._pipeline is not None:
-            self._pipeline.set_state(self._gst.State.NULL)
-            self._pipeline = None
+        """
+        Release the pipeline, and give up on it if it will not be released.
+
+        Taken off the attributes first so a teardown that never finishes is
+        abandoned rather than waited for again: open() builds a new pipeline and
+        this one is left to its stuck thread, holding a socket and a decoder
+        context until the process ends. That is a leak, and it is the price of a
+        camera that comes back on its own — waiting instead is what kept one
+        dark for fifteen hours.
+        """
+        pipeline, self._pipeline = self._pipeline, None
+        if pipeline is None:
+            return
+        self._appsink = self._streammux = self._bus = None
+
+        done = threading.Event()
+
+        def drop() -> None:
+            with _TEARDOWN_LOCK:
+                # Nothing reads this bus again, and a teardown need not wait to
+                # post to it.
+                pipeline.get_bus().set_flushing(True)
+                # Stepwise rather than straight to NULL: each driver context is
+                # handed back in its own transition, which is the order the
+                # decoder expects.
+                for state in (self._gst.State.PAUSED,
+                              self._gst.State.READY,
+                              self._gst.State.NULL):
+                    pipeline.set_state(state)
+            done.set()
+
+        threading.Thread(target=drop, name=f"teardown-{self._cam.id}",
+                         daemon=True).start()
+        if done.wait(_TEARDOWN_TIMEOUT_S):
             log.info("camera '%s': DeepStream pipeline stopped", self._cam.id)
+        else:
+            log.warning("camera '%s': pipeline did not stop within %.0fs — "
+                        "abandoning it", self._cam.id, _TEARDOWN_TIMEOUT_S)

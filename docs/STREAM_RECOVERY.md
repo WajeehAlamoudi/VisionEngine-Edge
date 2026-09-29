@@ -177,6 +177,48 @@ It also changes what a failure looks like. A broken TCP connection is reported;
 a vanished UDP flow is not. The recovery in §1 fires on an error rather than on
 a five-second starvation timeout.
 
+### 4. A teardown that cannot finish is abandoned
+
+The three fixes above were not enough, and the reason was one line. Rebooting
+the NVR with all four cameras live produced `reconnecting in 2s` and then
+nothing — no backoff, no further attempt, for as long as the process ran.
+
+A stack dump named it exactly:
+
+```
+close (core/model/detector/deepstream/runtime.py:678)
+reconnect (core/model/detector/base.py:134)
+reconnect (core/model/detector/deepstream/runtime.py:674)
+```
+
+All four camera threads sat in `close()`, inside
+`pipeline.set_state(Gst.State.NULL)`, which never returned. Reaching NULL joins
+the streaming threads, and on this hardware one of them stays in the decoder's
+V4L2 teardown when the RTSP socket is dead. Every socket timeout `rtspsrc` has
+is bounded — 20s at worst — so this is not a slow wait, it is an unbounded one.
+Going to TCP (§3) made it reachable: the media now shares the connection being
+torn down, so the teardown waits on the same dead socket.
+
+Nothing after that line runs. The reconnect, the backoff and their log lines are
+all correct and all unreachable, which is why the failure looked like missing
+retry logic. `request_stop()` calls the same blocking transition from the event
+loop, so a camera that cannot be torn down also stalls shutdown.
+
+`close()` now takes the pipeline off the runtime before touching it, flushes the
+bus, steps `PAUSED → READY → NULL` rather than jumping to NULL, holds a
+process-wide lock so one pipeline unwinds at a time, and does all of it on a
+thread it waits on for ten seconds. Past that it gives up, logs, and returns —
+`open()` builds a new pipeline and the old one is left to its stuck thread.
+
+The probe is bounded for the same reason. It runs on every `open()`, so an
+unbounded `cv2.VideoCapture` against a camera that has just stopped answering
+would only move the hang from `close()` to the line after it.
+
+Abandoning a pipeline leaks its socket and decoder context until the process
+restarts. One per camera per drop — four for an NVR reboot, nothing after that,
+since a later attempt has no pipeline left to release. That is the cost of a
+camera that recovers unattended.
+
 ---
 
 ## What you see now
@@ -185,6 +227,7 @@ a five-second starvation timeout.
 |---|---|
 | `... — reconnecting in 2s` | The stream just dropped. First failure |
 | `reconnect failed: ... — retrying in 4s` | Camera still unreachable; backoff growing to a 60s ceiling |
+| `pipeline did not stop within 10s — abandoning it` | The teardown hung; that pipeline is leaked and a new one is being built. Recovery continues |
 | `camera 'X': reconnected` | New connection open, frames flowing, failure count reset |
 | `camera 'X': stream ready  960x576` | Resolution re-read after the reconnect |
 | `failed to open source: ... — reconnecting in 2s` | Camera was down when the agent started; it is being waited for, not abandoned |
