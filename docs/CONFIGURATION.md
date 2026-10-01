@@ -242,7 +242,9 @@ The single tracker YAML has `algorithm`, `common`, `params`, and optional
 `occluboost`. `common` holds BoxMOT base overrides; `params` holds only the
 selected implementation's overrides; `reid` is built only when it needs one.
 The Python registry owns the complete defaults and allowed field list for all
-nine implementations. Start from `config_sample/boxmot_tracker.sample.yaml`.
+nine implementations. `config_sample/boxmot_tracker.sample.yaml` contains one
+active ByteTrack example plus commented, complete templates for every other
+algorithm; a deployed file keeps only one active algorithm and `params` block.
 
 The selected profile is strictly validated. Unknown names, typos and wrong
 value types stop startup. The registry is

@@ -43,10 +43,13 @@ def model_config(tracker: str) -> ModelConfig:
 
 class BoxMotConfigTests(unittest.TestCase):
     def test_sample_contains_only_selected_algorithm_and_validates(self):
-        raw = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
+        sample_text = SAMPLE.read_text(encoding="utf-8")
+        raw = yaml.safe_load(sample_text)
         self.assertEqual(raw["algorithm"], "bytetrack")
         self.assertIn("params", raw)
         self.assertNotIn("algorithms", raw)
+        for name in set(BOXMOT_ALGORITHMS) - {"bytetrack"}:
+            self.assertIn(f"# algorithm: {name}", sample_text)
 
         algorithm, params, reid = BoxMotTracker(
             model_config(str(SAMPLE))
