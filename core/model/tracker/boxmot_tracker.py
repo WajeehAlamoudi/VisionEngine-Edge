@@ -12,19 +12,23 @@ from ..accelerator import resolve_accelerator
 from ..stable_id import StableIdMap
 from ..types import InferenceResult
 from .base import Tracker
+from .boxmot_registry import BOXMOT_ALGORITHMS, get_algorithm, resolve_params
 
 log = logging.getLogger(__name__)
 
 # Used when cfg.tracker doesn't point at a readable YAML file — keeps the
 # tracker working even before a config file is deployed.
-_DEFAULT_PARAMS = {
-    "with_reid": False,
-    "use_cmc": False,
-}
+_DEFAULT_ALGORITHM = "bytetrack"
 
 # Small, widely-used person-ReID checkpoint — auto-downloaded by boxmot on
 # first use, same pattern as Ultralytics auto-downloading YOLO weights.
 _DEFAULT_REID_WEIGHTS = "osnet_x0_25_msmt17.pt"
+_DEFAULT_REID_CONFIG = {
+    "weights": _DEFAULT_REID_WEIGHTS,
+    "backend": "pytorch",
+    "device": "auto",
+    "half": False,
+}
 
 # ReID keys consumed by this class rather than passed through to BotSort.
 # BotSort takes a constructed reid_model object, not weights/device/precision,
@@ -48,10 +52,6 @@ _REID_BACKENDS_REQUIRING_INSTALL = ("onnx", "openvino", "tflite", "torchscript")
 # load. They are genuinely separate devices - one runs the detector, torch
 # runs ReID.
 _TORCH_DEVICES = ("cpu", "cuda", "mps")
-
-# Tracker algorithms supported by the Ultralytics/BoxMot path.  The detector
-# remains unchanged; each class only associates detections across frames.
-_TRACKER_ALGORITHMS = ("botsort", "bytetrack")
 
 # BoxMot tracker instances are per camera, but TensorRT ReID calls ultimately
 # share one CUDA context in this process. Serialize only the tracker/ReID call;
@@ -112,23 +112,9 @@ def _import_reid_backend(name: str):
     raise RuntimeError(f"unsupported reid_backend '{name}'")
 
 
-def _import_tracker_algorithm(name: str):
-    """Import only the BoxMot tracker selected by the deployed YAML file."""
-    if name == "botsort":
-        from boxmot.trackers.bbox.botsort import BotSort
-        return BotSort
-    if name == "bytetrack":
-        from boxmot.trackers.bbox.bytetrack import ByteTrack
-        return ByteTrack
-    raise RuntimeError(
-        f"unsupported tracker algorithm '{name}' — expected one of "
-        f"{', '.join(_TRACKER_ALGORITHMS)}"
-    )
-
-
 class BoxMotTracker(Tracker):
     """
-    Selectable BoT-SORT or ByteTrack association via the boxmot library.
+    Selectable bounding-box association via the boxmot library.
 
     Contains no detection model — update() only accepts detections a
     Detector already computed, and does Kalman-filter motion prediction +
@@ -172,27 +158,20 @@ class BoxMotTracker(Tracker):
         self._name_to_idx = {name: i for i, name in enumerate(self._cfg.classes)}
         self._idx_to_name = {i: name for name, i in self._name_to_idx.items()}
 
-        params = self._load_params()
-        algorithm = str(params.pop("algorithm", "botsort")).strip().lower()
-        tracker_cls = _import_tracker_algorithm(algorithm)
+        algorithm, params, reid = self._load_config()
+        spec = get_algorithm(algorithm)
+        tracker_cls = spec.load_class()
 
-        # Popped, not passed through: BotSort wants a constructed reid_model,
-        # not the pieces it is built from.
-        reid_weights = params.pop("reid_weights", _DEFAULT_REID_WEIGHTS)
-        reid_backend = params.pop("reid_backend", "pytorch")
-        reid_device = params.pop("reid_device", "auto")
-        reid_half = params.pop("reid_half", False)
-
-        if algorithm == "botsort" and params.get("with_reid"):
+        if spec.needs_reid(params):
             params["reid_model"] = self._build_reid(
-                reid_weights, reid_backend, reid_device, reid_half
+                reid["weights"], reid["backend"], reid["device"], reid["half"]
             )
-            self._uses_tensorrt_reid = reid_backend == "tensorrt"
+            self._uses_tensorrt_reid = reid["backend"] == "tensorrt"
 
         self._tracker = tracker_cls(**params)
         log.info(
-            "tracker '%s' ready — boxmot %s (with_reid=%s)",
-            self._cfg.id, algorithm, bool(params.get("with_reid")),
+            "tracker '%s' ready — boxmot %s (reid=%s)",
+            self._cfg.id, algorithm, spec.needs_reid(params),
         )
 
     def _reid_device(self, requested: str) -> torch.device:
@@ -265,19 +244,126 @@ class BoxMotTracker(Tracker):
         )
         return model
 
-    def _load_params(self) -> dict:
+    def _load_config(self) -> tuple[str, dict, dict]:
         path = Path(self._cfg.tracker)
         if not path.is_file():
             log.warning(
-                "tracker '%s': config file '%s' not found — using defaults %s",
-                self._cfg.id, path, _DEFAULT_PARAMS,
+                "tracker '%s': config file '%s' not found — using %s defaults",
+                self._cfg.id, path, _DEFAULT_ALGORITHM,
             )
-            return dict(_DEFAULT_PARAMS)
+            return (
+                _DEFAULT_ALGORITHM,
+                resolve_params(_DEFAULT_ALGORITHM, {}, {}),
+                dict(_DEFAULT_REID_CONFIG),
+            )
 
         with path.open(encoding="utf-8") as f:
-            params = yaml.safe_load(f) or {}
-        log.info("tracker '%s': loaded params from %s", self._cfg.id, path)
-        return params
+            raw = yaml.safe_load(f) or {}
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"tracker config '{path}' must contain a YAML mapping")
+
+        # New single-file schema. Every algorithm profile is validated, not
+        # just the active one, so switching `algorithm` can never reveal a
+        # misspelled option that was silently waiting in the file.
+        if any(key in raw for key in ("common", "reid", "algorithms")):
+            allowed_top = {"algorithm", "common", "reid", "algorithms"}
+            unknown_top = set(raw) - allowed_top
+            if unknown_top:
+                raise RuntimeError(
+                    f"tracker config has unknown top-level key(s): "
+                    f"{', '.join(sorted(unknown_top))}"
+                )
+
+            algorithm = self._algorithm_name(raw.get("algorithm", _DEFAULT_ALGORITHM))
+            common = self._mapping(raw.get("common", {}), "common")
+            profiles = self._mapping(raw.get("algorithms", {}), "algorithms")
+            unknown_algorithms = set(profiles) - set(BOXMOT_ALGORITHMS)
+            if unknown_algorithms:
+                raise RuntimeError(
+                    "tracker config has unsupported algorithm profile(s): "
+                    f"{', '.join(sorted(unknown_algorithms))}"
+                )
+            missing_algorithms = set(BOXMOT_ALGORITHMS) - set(profiles)
+            if missing_algorithms:
+                raise RuntimeError(
+                    "tracker config is missing required algorithm profile(s): "
+                    f"{', '.join(sorted(missing_algorithms))}"
+                )
+            for name, configured in profiles.items():
+                resolve_params(name, common, self._mapping(configured, f"algorithms.{name}"))
+            params = resolve_params(algorithm, common, profiles[algorithm])
+            reid = self._reid_config(self._mapping(raw.get("reid", {}), "reid"))
+        else:
+            # Backward compatibility lets existing deployments pull this code
+            # before moving from botsort_tracker.yaml to boxmot_tracker.yaml.
+            legacy = dict(raw)
+            algorithm = self._algorithm_name(legacy.pop("algorithm", "botsort"))
+            reid = self._reid_config({
+                "weights": legacy.pop("reid_weights", _DEFAULT_REID_WEIGHTS),
+                "backend": legacy.pop("reid_backend", "pytorch"),
+                "device": legacy.pop("reid_device", "auto"),
+                "half": legacy.pop("reid_half", False),
+            })
+            params = resolve_params(algorithm, {}, legacy)
+            log.warning(
+                "tracker '%s': legacy flat config '%s' is deprecated; migrate to "
+                "the single boxmot_tracker.yaml schema",
+                self._cfg.id, path,
+            )
+
+        log.info(
+            "tracker '%s': loaded %s profile from %s", self._cfg.id, algorithm, path
+        )
+        return algorithm, params, reid
+
+    @staticmethod
+    def _mapping(value, field: str) -> dict:
+        if not isinstance(value, dict):
+            raise RuntimeError(f"tracker config '{field}' must be a YAML mapping")
+        return value
+
+    @staticmethod
+    def _algorithm_name(value) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError("tracker config 'algorithm' must be a non-empty string")
+        name = value.strip().lower()
+        get_algorithm(name)
+        return name
+
+    @staticmethod
+    def _reid_config(configured: dict) -> dict:
+        unknown = set(configured) - set(_DEFAULT_REID_CONFIG)
+        if unknown:
+            raise RuntimeError(
+                f"tracker reid config has unknown key(s): {', '.join(sorted(unknown))}"
+            )
+        reid = {**_DEFAULT_REID_CONFIG, **configured}
+        expected = {
+            "weights": str,
+            "backend": str,
+            "device": str,
+            "half": bool,
+        }
+        for key, value_type in expected.items():
+            if not isinstance(reid[key], value_type):
+                raise RuntimeError(
+                    f"tracker reid key '{key}' expects {value_type.__name__}, "
+                    f"got {type(reid[key]).__name__}"
+                )
+        if reid["backend"] not in _REID_BACKENDS:
+            raise RuntimeError(
+                f"tracker reid backend '{reid['backend']}' is unsupported; "
+                f"expected one of {', '.join(_REID_BACKENDS)}"
+            )
+        valid_devices = ("auto", *_TORCH_DEVICES)
+        if reid["device"] not in valid_devices:
+            raise RuntimeError(
+                f"tracker reid device '{reid['device']}' is unsupported; "
+                f"expected one of {', '.join(valid_devices)}"
+            )
+        if not reid["weights"].strip():
+            raise RuntimeError("tracker reid weights must be a non-empty path or model name")
+        return reid
 
     def update(self, frame, detections: list[InferenceResult]) -> list[InferenceResult]:
         if not detections:

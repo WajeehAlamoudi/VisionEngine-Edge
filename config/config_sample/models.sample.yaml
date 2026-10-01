@@ -145,16 +145,11 @@ models:
   #                        Cameras sharing this model_id share one model instance (RAM efficient).
   #
   #   tracker     PATH to the tracker parameters file, relative to the project
-  #               root — e.g. "config/botsort_tracker.yaml". This is a file
-  #               path, NOT an algorithm name: its contents are passed straight
-  #               into the BoT-SORT tracker (with_reid, frame_rate, thresholds).
-  #               Copy config/config_sample/botsort_tracker.sample.yaml and tune
-  #               it per device.
-  #
-  #               On every device except deepstream, BoT-SORT is the only
-  #               algorithm implemented — see core/model/tracker/registry.py.
-  #               There is no way to select ByteTrack; naming a different file
-  #               changes the parameters, never the algorithm.
+  #               root — e.g. "config/boxmot_tracker.yaml". On Ultralytics,
+  #               copy config_sample/boxmot_tracker.sample.yaml. Its `algorithm`
+  #               selects ByteTrack, BoT-SORT, OCSORT, StrongSORT, DeepOCSORT,
+  #               SFSORT, HybridSORT, BoostTrack or OccluBoost. The same file
+  #               contains complete, strictly validated profiles and ReID setup.
   #
   #               On runtime: deepstream this field means something slightly
   #               different — it is nvtracker's config, and it DOES choose the
@@ -217,7 +212,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "config/botsort_tracker.yaml"
+    tracker: "config/boxmot_tracker.yaml"
     half: false
 
 
@@ -237,7 +232,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "config/botsort_tracker.yaml"
+    tracker: "config/boxmot_tracker.yaml"
     half: false
 
 
@@ -260,7 +255,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "config/botsort_tracker.yaml"
+    tracker: "config/boxmot_tracker.yaml"
     half: false
 
 
@@ -286,7 +281,7 @@ models:
     iou_threshold: 0.45
     input_size: [640, 640]
     use_tracker: false
-    tracker: "config/botsort_tracker.yaml"
+    tracker: "config/boxmot_tracker.yaml"
     half: false
 
 

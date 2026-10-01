@@ -120,7 +120,7 @@ cameras:
   #
   # ── tracker ───────────────────────────────────────────────────────────────────
   #
-  #   use_tracker true  → BoT-SORT tracker enabled — track_id populated per object,
+  #   use_tracker true  → selected BoxMOT tracker enabled — track_id populated,
   #                        allowing you to follow the same person across frames.
   #                        Each camera with use_tracker: true gets its own dedicated
   #                        model instance (tracker state cannot be shared).

@@ -269,15 +269,16 @@ the full field reference.
 | `rules.yaml` | What is stored and what alerts — **the storage gate** |
 | `notifications.yaml` | Log channel, webhooks and their rule filters |
 | `collection.yaml` | Dataset sessions, or empty |
-| `botsort_tracker.yaml` | Tracker params, ReID backend and engine path |
+| `boxmot_tracker.yaml` | BoxMOT algorithm, profiles, ReID backend and weights |
 
-For TensorRT ReID, `botsort_tracker.yaml` needs:
+For TensorRT ReID, the `reid` section of `boxmot_tracker.yaml` needs:
 
 ```yaml
-reid_backend: tensorrt
-reid_device: auto
-reid_half: true
-reid_weights: "/opt/visionengine/.venv/lib/python3.10/site-packages/models/osnet_x0_25_msmt17.engine"
+reid:
+  backend: tensorrt
+  device: auto
+  half: true
+  weights: "/opt/visionengine/.venv/lib/python3.10/site-packages/models/osnet_x0_25_msmt17.engine"
 ```
 
 Validate before running:
@@ -319,7 +320,7 @@ the measured rate, because it scales how long a lost track is remembered:
 memory in seconds = track_buffer / 30      (only while frame_rate is accurate)
 ```
 
-Set `frame_rate` in `botsort_tracker.yaml` to the figure above and restart.
+Set `frame_rate` in the selected `boxmot_tracker.yaml` profile to the figure above and restart.
 
 Install as a service once it is stable:
 
@@ -396,7 +397,7 @@ Recovery, if it has already happened:
 
 ```bash
 pip uninstall -y torch torchvision           # reveals the system build again
-pip install "boxmot>=19.0.0"                 # undo any downgrade
+pip install "boxmot==19.0.0"                 # restore the pinned version
 pip list --local | grep -E "nvidia|cuda-|triton"   # orphaned CUDA packages
 ```
 

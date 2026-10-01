@@ -6,8 +6,8 @@ from .boxmot_tracker import BoxMotTracker
 
 # Backend name → implementation. Every backend registered here must consume
 # detections a Detector already computed — no backend may contain its own
-# detection model. Add an entry here when a new tracking algorithm is added
-# (e.g. a different boxmot tracker, or a ReID-enabled variant).
+# detection model. BoxMOT algorithms are selected inside boxmot_tracker.yaml;
+# this registry selects the tracking provider/backend itself.
 _BACKENDS: dict[str, type[Tracker]] = {
     "boxmot": BoxMotTracker,
 }

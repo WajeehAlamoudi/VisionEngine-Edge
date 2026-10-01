@@ -1,0 +1,189 @@
+# ── Unified BoxMOT tracker configuration ─────────────────────────────────────
+# Copy this file to config/boxmot_tracker.yaml, then point an Ultralytics model
+# at it with: tracker: "config/boxmot_tracker.yaml"
+#
+# Change only this value to switch association algorithms. The detector remains
+# YOLO; each camera still receives an independent tracker instance.
+algorithm: bytetrack
+
+# Parameters inherited by every algorithm through BoxMOT's BaseTracker.
+common:
+  det_thresh: 0.3
+  max_age: 30
+  max_obs: 50
+  min_hits: 3
+  iou_threshold: 0.3
+  per_class: false
+  asso_func: iou
+
+# Built only when the selected algorithm/profile needs appearance embeddings.
+# ByteTrack, OCSORT and SFSORT ignore this block and incur no ReID cost.
+reid:
+  backend: pytorch               # pytorch | tensorrt
+  device: auto                   # auto | cpu | cuda | mps
+  half: true                     # effective only on CUDA for pytorch
+  weights: "osnet_x0_25_msmt17.pt"
+
+# Complete BoxMOT 19 profiles. Keep all profiles in this one file so switching
+# is one-line, reviewable and reversible. Unknown algorithm names or parameter
+# names stop startup with a clear error; no setting is silently swallowed.
+algorithms:
+  bytetrack:
+    min_conf: 0.2
+    track_thresh: 0.5
+    match_thresh: 0.8
+    track_buffer: 75
+    frame_rate: 12
+
+  botsort:
+    track_high_thresh: 0.5
+    track_low_thresh: 0.1
+    new_track_thresh: 0.6
+    track_buffer: 30
+    match_thresh: 0.8
+    proximity_thresh: 0.5
+    appearance_thresh: 0.25
+    use_cmc: false
+    cmc_method: ecc
+    frame_rate: 30
+    fuse_first_associate: false
+    with_reid: true
+    second_match_thresh: 0.5
+    unconfirmed_match_thresh: 0.7
+    unconfirmed_emb_scale: 2.0
+    removed_stracks_buffer: 100
+
+  ocsort:
+    min_conf: 0.1
+    delta_t: 3
+    inertia: 0.2
+    use_byte: false
+    Q_xy_scaling: 0.01
+    Q_s_scaling: 0.0001
+
+  strongsort:
+    min_conf: 0.1
+    max_cos_dist: 0.2
+    max_iou_dist: 0.7
+    n_init: 3
+    nn_budget: 100
+    mc_lambda: 0.98
+    ema_alpha: 0.9
+
+  deepocsort:
+    delta_t: 3
+    inertia: 0.2
+    w_association_emb: 0.5
+    alpha_fixed_emb: 0.95
+    aw_param: 0.5
+    embedding_off: false
+    cmc_off: false
+    aw_off: false
+    Q_xy_scaling: 0.01
+    Q_s_scaling: 0.0001
+
+  sfsort:
+    high_th: 0.6
+    match_th_first: 0.67
+    new_track_th: 0.7
+    low_th: 0.1
+    match_th_second: 0.3
+    dynamic_tuning: false
+    cth: 0.5
+    high_th_m: 0.0
+    new_track_th_m: 0.0
+    match_th_first_m: 0.0
+    obb_theta_damping: 0.8
+    marginal_timeout: 0
+    central_timeout: 0
+    frame_width: null
+    frame_height: null
+    horizontal_margin: null
+    vertical_margin: null
+
+  hybridsort:
+    cmc_method: ecc
+    with_reid: true
+    low_thresh: 0.1
+    delta_t: 3
+    inertia: 0.05
+    use_byte: true
+    longterm_bank_length: 30
+    alpha: 0.9
+    adapfs: false
+    track_thresh: 0.5
+    EG_weight_high_score: 4.6
+    EG_weight_low_score: 1.3
+    TCM_first_step: true
+    TCM_byte_step: true
+    TCM_byte_step_weight: 1.0
+    high_score_matching_thresh: 0.7
+    with_longterm_reid: true
+    longterm_reid_weight: 0.0
+    with_longterm_reid_correction: true
+    longterm_reid_correction_thresh: 0.4
+    longterm_reid_correction_thresh_low: 0.4
+    dataset: ""
+
+  boosttrack:
+    use_cmc: true
+    min_box_area: 10
+    aspect_ratio_thresh: 1.6
+    cmc_method: ecc
+    lambda_iou: 0.5
+    lambda_mhd: 0.25
+    lambda_shape: 0.25
+    use_dlo_boost: true
+    use_duo_boost: true
+    dlo_boost_coef: 0.65
+    s_sim_corr: false
+    use_rich_s: false
+    use_sb: false
+    use_vt: false
+    with_reid: false
+    adaptive_kf: false
+
+  occluboost:
+    use_cmc: true
+    min_box_area: 10
+    aspect_ratio_thresh: 1.6
+    cmc_method: ecc
+    lambda_iou: 0.5
+    lambda_mhd: 0.25
+    lambda_shape: 0.25
+    use_dlo_boost: true
+    use_duo_boost: true
+    dlo_boost_coef: 0.65
+    s_sim_corr: false
+    use_rich_s: false
+    use_sb: false
+    use_vt: false
+    with_reid: false
+    recovery_appearance_thresh: 0.99
+    recovery_iou_thresh: 0.1
+    recovery_max_age: 1
+    feat_alpha: 0.95
+    track_low_thresh: 0.1
+    second_iou_thresh: 0.6
+    second_appearance_thresh: 0.5
+    second_pass_max_age: 1
+    second_pass_min_hits: 3
+    use_second_pass: false
+    new_track_thresh: 0.6
+    confirm_hits: 2
+    instant_confirm_thresh: 0.7
+    tentative_max_age: 1
+    duplicate_iou_thresh: 0.85
+    ams_enabled: true
+    ams_alpha0: 0.4
+    ams_threshold: 0.5
+    ams_buffer_size: 30
+    ams_shrink_ratio: 0.75
+    lambda_emb_multiplier: 1.5
+    gta_enabled: true
+    gta_appearance_thresh: 0.5
+    gta_min_track_length: 5
+    gta_smooth_tau: 5.0
+    gta_interpolate: true
+    gta_max_gap: 60
+    adaptive_kf: false

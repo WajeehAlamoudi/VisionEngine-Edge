@@ -22,7 +22,7 @@ class ModelRunner:
     decoupled from the tracking algorithm.
     """
 
-    def __init__(self, cfg: ModelConfig, use_tracker: bool = False, tracker: str = "botsort.yaml") -> None:
+    def __init__(self, cfg: ModelConfig, use_tracker: bool = False, tracker: str = "boxmot") -> None:
         self._cfg = cfg
         self._use_tracker = use_tracker
         self._tracker_algorithm = tracker  # kept for back-compat/logging; unused by the boxmot backend

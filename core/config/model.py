@@ -85,9 +85,8 @@ class ModelConfig:
     iou_threshold: float
     input_size: list[int]   # [width, height]
     use_tracker: bool        # true = tracking ON → track_id populated per object
-    tracker: str             # path to the tracker params file — a BoT-SORT yaml on
-                              # the ultralytics runtime, and on deepstream the
-                              # nvtracker config, which also chooses the algorithm
+    tracker: str             # unified BoxMOT yaml on the ultralytics runtime;
+                              # on deepstream, the nvtracker config instead
     half: bool               # FP16 inference — only applied when the accelerator
                               # resolves to cuda; ignored on cpu/mps, where it gives
                               # no benefit (see accelerator.py)

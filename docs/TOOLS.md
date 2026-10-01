@@ -252,7 +252,7 @@ production; `DEBUG` is per-frame and will bury you.
 ```
 VisionEngine Edge — device=node-01  environment=production
 detector 'general_coco': loading ./models/yolo26n.engine on cuda
-tracker 'general_coco' ready — boxmot BotSort (with_reid=True, use_cmc=False)
+tracker 'general_coco' ready — boxmot botsort (reid=True)
 tracker 'general_coco': ReID ready — tensorrt backend on cuda (half=True, weights=…engine)
 camera 'cam-01': stream ready  960x480
 starting 4 camera pipeline(s)
@@ -262,9 +262,9 @@ Check three things here: the detector loaded the format you expect on the device
 you expect; ReID says `tensorrt` and not `pytorch`; and the stream resolution
 matches what your zones were drawn against.
 
-Because `botsort_tracker.yaml` is not strictly validated and `BotSort` absorbs
-unknown keys, **the startup `BotSort: …` line is the only proof a tracker value
-arrived**. A typo is swallowed silently by the file.
+The unified tracker loader validates every profile before construction. An
+unknown or misspelled key stops startup instead of being absorbed by BoxMOT's
+`**kwargs`; the startup line then confirms which profile became active.
 
 ### While running
 
@@ -275,7 +275,7 @@ camera 'cam-01': 10.4 fps (target 15) | 104 frames, 178 detections in 10s
 ```
 
 This is the number that matters. `fps_target` is a ceiling; this is reality —
-and it is the value `frame_rate` in `botsort_tracker.yaml` must be set to.
+and it is the value `frame_rate` in the selected `boxmot_tracker.yaml` profile must be set to.
 
 | Symptom in the log | Usually means |
 |---|---|

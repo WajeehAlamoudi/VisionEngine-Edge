@@ -60,7 +60,7 @@ This README is the front door. The full guides live in **[`docs/`](docs/)**.
                     │                                                     │
   Camera Stream ───►│  CameraRuntime.read()  ── timestamped here          │
   USB / RTSP        │      capture + inference, matched to each other:    │
-                    │      OpenCV → YOLO + BoT-SORT, or                   │
+                    │       OpenCV → YOLO + BoxMOT, or                    │
                     │      NVDEC → nvinfer → NvTracker (stays on the GPU) │
                     │      │                                              │
                     │   enrich()                                          │
@@ -101,7 +101,7 @@ One pipeline per camera, each an independent task — a failing camera does not 
 ## Features
 
 - **Detection backends** — Ultralytics (`.pt`, `.engine`, `.mlpackage`) and DeepStream (`.engine`), each importing its SDK lazily so one device's runtime can't break another's
-- **BoT-SORT tracking** with **OSNet ReID** — persistent `track_id` across frames and occlusion, per-model toggle
+- **Selectable BoxMOT tracking** — nine algorithms, optional OSNet ReID, persistent UUID `track_id`, per-model toggle
 - **TensorRT acceleration** — detector and ReID both run as compiled engines; see the [benchmark](docs/ARCHITECTURE.md#benchmark)
 - **Zone analytics** — polygon zones in native camera resolution, click-to-draw builder, person membership tested at the feet
 - **Rules engine** — the gate for storage *and* alerts, per class, camera, zone, with cooldown
@@ -198,11 +198,11 @@ config/
 ├── rules.yaml            ← what is stored, and what raises an alert
 ├── notifications.yaml    ← log channel and webhook delivery, per-rule routing
 ├── collection.yaml       ← dataset collection sessions (optional)
-├── botsort_tracker.yaml  ← tracker tuning + ReID backend, device-specific
+├── boxmot_tracker.yaml   ← algorithm selection, full profiles, ReID setup
 └── config_sample/        ← fully-commented reference for every field
 ```
 
-`botsort_tracker.yaml` is the odd one out: it is read at model load time from the path in `models.yaml` → `tracker`, only when `use_tracker: true`, and is **not** covered by strict validation.
+`boxmot_tracker.yaml` is read at model load time from the path in `models.yaml` → `tracker`, only when `use_tracker: true`. Its algorithm profiles are strictly validated.
 
 Two conventions run through all of them:
 
@@ -223,12 +223,12 @@ models:
     runtime: ultralytics
     accelerator: cuda
     use_tracker: true                        # ← flip this ON
-    tracker: "config/botsort_tracker.yaml"   # ← tracker params live here
+    tracker: "config/boxmot_tracker.yaml"    # ← algorithm and profiles live here
 ```
 
 Cameras sharing a model with `use_tracker: false` share one model instance (RAM efficient). Cameras with `use_tracker: true` each get a dedicated instance — tracker state is per-camera.
 
-One value in `botsort_tracker.yaml` deserves attention: `frame_rate` must be the camera's **measured** rate, not `fps_target`. It scales how long a lost track is remembered, and a stale value silently breaks identity in whichever direction is worse. See [Architecture § Tracking](docs/ARCHITECTURE.md#tracking).
+For algorithms with `frame_rate`, use the camera's **measured** rate, not `fps_target`. It scales how long a lost track is remembered. See [Architecture § Tracking](docs/ARCHITECTURE.md#tracking).
 
 ---
 
@@ -291,7 +291,7 @@ VisionEngine-Edge/
 │   │   ├── detector/           ← one package per runtime + the registry
 │   │   │   ├── ultralytics/    ← YOLO detector + OpenCV capture
 │   │   │   └── deepstream/     ← nvinfer parsing + the GStreamer pipeline
-│   │   └── tracker/            ← BoT-SORT via boxmot, ReID backend selection
+│   │   └── tracker/            ← BoxMOT algorithm registry + ReID selection
 │   ├── zone/                   ← point-in-polygon zone assignment
 │   ├── rules/                  ← RulesEngine + DetectionEvent + RuleMatch
 │   ├── buffer/                 ← SQLite offline buffer (aiosqlite)

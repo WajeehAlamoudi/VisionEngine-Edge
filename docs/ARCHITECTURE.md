@@ -14,7 +14,7 @@
 <br/>
 
 [![Detect](https://img.shields.io/badge/Detect-YOLO-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://ultralytics.com)
-[![Track](https://img.shields.io/badge/Track-BoT--SORT%20%2B%20OSNet-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://github.com/mikel-brostrom/boxmot)
+[![Track](https://img.shields.io/badge/Track-BoxMOT%20%2B%20optional%20ReID-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](https://github.com/mikel-brostrom/boxmot)
 [![Accel](https://img.shields.io/badge/Accel-TensorRT%20%7C%20DeepStream%20%7C%20CoreML-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](#detector-backends)
 
 <br/>
@@ -32,7 +32,7 @@ camera failing does not stop the others.
 
 ```
   ┌── camera runtime ──  capture + inference, matched to each other:
-  │                      OpenCV → YOLO + BoT-SORT, or NVDEC → nvinfer
+  │                      OpenCV → YOLO + BoxMOT, or NVDEC → nvinfer
   │                      → NvTracker. Returns boxes, classes, confidences
   │                      and track_id, filtered to the camera's classes
   │                      and timestamped at capture
@@ -107,7 +107,7 @@ what consumes the frame.
 CameraPipeline
   ← detections ←
 CameraRuntime
-  ├─ ultralytics:  OpenCV → numpy frame → YOLO + BoT-SORT
+  ├─ ultralytics:  OpenCV → numpy frame → YOLO + selected BoxMOT tracker
   └─ deepstream:   RTSP → NVDEC → nvinfer → NvTracker   (never leaves the GPU)
 ```
 
@@ -212,12 +212,12 @@ Three separate things, often confused:
 |---|---|---|
 | **YOLO** | Detection model | Finds objects in a frame |
 | **boxmot** | Tracking *library* | Hosts several tracker implementations |
-| **BoT-SORT** | Tracking *algorithm*, one of boxmot's | The one we use |
+| **BoT-SORT** | Tracking *algorithm*, one of BoxMOT's | One selectable profile |
 | **OSNet** | ReID network | Produces the appearance embedding BoT-SORT matches on |
 
-So: YOLO detects, BoT-SORT (from boxmot) associates across frames, OSNet tells
-BoT-SORT what each person *looks like*. Switching algorithm means changing which
-boxmot tracker is constructed — not swapping the detector.
+So: YOLO detects, the selected BoxMOT algorithm associates across frames, and
+OSNet tells ReID-capable algorithms what each person *looks like*. Switching
+`algorithm` changes the tracker — never the detector.
 
 ### How BoT-SORT associates
 
@@ -246,7 +246,7 @@ buffer_size = int(frame_rate / 30 × track_buffer)
 memory in seconds = track_buffer / 30      ← only while frame_rate is accurate
 ```
 
-`frame_rate` in `botsort_tracker.yaml` must be the **measured** rate, not
+`frame_rate` in the selected `boxmot_tracker.yaml` profile must be the **measured** rate, not
 `fps_target`. It does nothing but scale this window, and a stale value silently
 changes it in whichever direction is worse:
 

@@ -60,15 +60,14 @@ can be reviewed in a diff.
 | `rules.yaml` | What is stored and what raises an alert | Per use case |
 | `notifications.yaml` | Log channel and webhook delivery, per-rule routing | Per use case |
 | `collection.yaml` | Dataset-building sessions | Optional |
-| `botsort_tracker.yaml` | Tracker tuning — device-specific | When tracking is on |
+| `boxmot_tracker.yaml` | BoxMOT algorithm, complete profiles and ReID | When tracking is on |
 | `deepstream_infer.txt` | nvinfer config — network shape, class count, clustering | `runtime: deepstream` only |
 | `peoplenet_labels.txt` | Model's class names, one per line, in model order | `runtime: deepstream` only |
 | `nvdcf_tracker.yml` | nvtracker config — chooses the tracking algorithm | `runtime: deepstream` + `use_tracker` |
 
-`botsort_tracker.yaml` is the odd one out: it is **not** loaded by
-`load_config()` and **not** strictly validated. It is read at model load time
-from the path in `models.yaml` → `tracker`, and only when `use_tracker: true`.
-A typo there is silently absorbed — see [Tracker config](#tracker-config).
+`boxmot_tracker.yaml` is read at model load time from the path in
+`models.yaml` → `tracker`, only when `use_tracker: true`. Its own loader
+strictly validates the selected algorithm, every saved profile and ReID setup.
 
 ---
 
@@ -237,18 +236,17 @@ blank file means the feature is off. The file must still exist. With content,
 
 ### Tracker config
 
-The tracker YAML's optional `algorithm` selects `botsort` or `bytetrack`;
-omitting it keeps the backward-compatible `botsort` default. The remaining
-values are passed to that BoxMot tracker. BoT-SORT additionally accepts four
-`reid_*` keys that this project consumes to build the ReID model. ByteTrack has
-no ReID model; start from `config_sample/bytetrack_tracker.sample.yaml`.
+The single tracker YAML has four top-level fields: `algorithm`, `common`,
+`reid`, and `algorithms`. `algorithm` selects one of `bytetrack`, `botsort`,
+`ocsort`, `strongsort`, `deepocsort`, `sfsort`, `hybridsort`, `boosttrack`, or
+`occluboost`. `common` holds BoxMOT base settings; `algorithms` holds the full
+profile for each implementation; `reid` is built only when the selected
+profile needs it. Start from `config_sample/boxmot_tracker.sample.yaml`.
 
-Two cautions. It is **not covered by strict validation**, and `BotSort` accepts
-`**kwargs` — so `det_thresh`, `max_age`, `min_hits`, `iou_threshold`,
-`asso_func` and `per_class` are absorbed and echoed in the startup log while
-nothing reads them. They belong to other boxmot trackers. A typo is swallowed
-the same way. Confirm a value arrived by reading the `BotSort: ...` startup
-line, not by trusting the file.
+Every profile is validated, including inactive profiles. Unknown names, typos,
+wrong value types and a missing selected profile stop startup. The registry is
+pinned to BoxMOT 19.0.0 so the declared parameter set cannot drift underneath
+the configuration.
 
 And `frame_rate` must be the **measured** rate, not `fps_target` — it scales how
 long a lost track is remembered. Details in
@@ -352,7 +350,7 @@ models.yaml ──id──► cameras.yaml ──id──► rules.yaml ──na
      │                   │                    │
      │                   └──zone name─────────┘
      │
-     └──tracker path──► botsort_tracker.yaml   (only when use_tracker: true)
+     └──tracker path──► boxmot_tracker.yaml    (only when use_tracker: true)
 
 collection.yaml ──camera id──► cameras.yaml
 ```
