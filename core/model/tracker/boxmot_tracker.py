@@ -49,6 +49,10 @@ _REID_BACKENDS_REQUIRING_INSTALL = ("onnx", "openvino", "tflite", "torchscript")
 # runs ReID.
 _TORCH_DEVICES = ("cpu", "cuda", "mps")
 
+# Tracker algorithms supported by the Ultralytics/BoxMot path.  The detector
+# remains unchanged; each class only associates detections across frames.
+_TRACKER_ALGORITHMS = ("botsort", "bytetrack")
+
 # BoxMot tracker instances are per camera, but TensorRT ReID calls ultimately
 # share one CUDA context in this process. Serialize only the tracker/ReID call;
 # capture and detector inference remain independent per camera.
@@ -108,9 +112,23 @@ def _import_reid_backend(name: str):
     raise RuntimeError(f"unsupported reid_backend '{name}'")
 
 
+def _import_tracker_algorithm(name: str):
+    """Import only the BoxMot tracker selected by the deployed YAML file."""
+    if name == "botsort":
+        from boxmot.trackers.bbox.botsort import BotSort
+        return BotSort
+    if name == "bytetrack":
+        from boxmot.trackers.bbox.bytetrack import ByteTrack
+        return ByteTrack
+    raise RuntimeError(
+        f"unsupported tracker algorithm '{name}' — expected one of "
+        f"{', '.join(_TRACKER_ALGORITHMS)}"
+    )
+
+
 class BoxMotTracker(Tracker):
     """
-    BoT-SORT tracking via the boxmot library.
+    Selectable BoT-SORT or ByteTrack association via the boxmot library.
 
     Contains no detection model — update() only accepts detections a
     Detector already computed, and does Kalman-filter motion prediction +
@@ -151,12 +169,12 @@ class BoxMotTracker(Tracker):
         # import made core.model unimportable there. That took the debug tool and
         # anything else touching the model layer down with it, on a device where
         # this class was never going to be built.
-        from boxmot.trackers.bbox.botsort import BotSort
-
         self._name_to_idx = {name: i for i, name in enumerate(self._cfg.classes)}
         self._idx_to_name = {i: name for name, i in self._name_to_idx.items()}
 
         params = self._load_params()
+        algorithm = str(params.pop("algorithm", "botsort")).strip().lower()
+        tracker_cls = _import_tracker_algorithm(algorithm)
 
         # Popped, not passed through: BotSort wants a constructed reid_model,
         # not the pieces it is built from.
@@ -165,16 +183,16 @@ class BoxMotTracker(Tracker):
         reid_device = params.pop("reid_device", "auto")
         reid_half = params.pop("reid_half", False)
 
-        if params.get("with_reid"):
+        if algorithm == "botsort" and params.get("with_reid"):
             params["reid_model"] = self._build_reid(
                 reid_weights, reid_backend, reid_device, reid_half
             )
             self._uses_tensorrt_reid = reid_backend == "tensorrt"
 
-        self._tracker = BotSort(**params)
+        self._tracker = tracker_cls(**params)
         log.info(
-            "tracker '%s' ready — boxmot BotSort (with_reid=%s, use_cmc=%s)",
-            self._cfg.id, params.get("with_reid"), params.get("use_cmc"),
+            "tracker '%s' ready — boxmot %s (with_reid=%s)",
+            self._cfg.id, algorithm, bool(params.get("with_reid")),
         )
 
     def _reid_device(self, requested: str) -> torch.device:

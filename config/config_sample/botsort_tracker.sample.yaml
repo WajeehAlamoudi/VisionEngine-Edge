@@ -11,6 +11,10 @@
 # (e.g. a future ByteTrack config would be "bytetrack_tracker.yaml").
 # Add a new one the same way if a new tracker backend is registered in
 # core/model/tracker/registry.py.
+
+# Selects the association algorithm used after YOLO detection. Omit for
+# backward compatibility (botsort remains the default).
+algorithm: botsort
 #
 # These are real, literal values passed straight into boxmot's BotSort
 # class. This is NOT the same file as boxmot's own bundled botsort.yaml —

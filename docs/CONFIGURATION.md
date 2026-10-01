@@ -237,9 +237,11 @@ blank file means the feature is off. The file must still exist. With content,
 
 ### Tracker config
 
-`botsort_tracker.yaml` holds real values passed straight into boxmot's
-`BotSort`, plus four `reid_*` keys this project consumes to build the ReID
-model.
+The tracker YAML's optional `algorithm` selects `botsort` or `bytetrack`;
+omitting it keeps the backward-compatible `botsort` default. The remaining
+values are passed to that BoxMot tracker. BoT-SORT additionally accepts four
+`reid_*` keys that this project consumes to build the ReID model. ByteTrack has
+no ReID model; start from `config_sample/bytetrack_tracker.sample.yaml`.
 
 Two cautions. It is **not covered by strict validation**, and `BotSort` accepts
 `**kwargs` — so `det_thresh`, `max_age`, `min_hits`, `iou_threshold`,
