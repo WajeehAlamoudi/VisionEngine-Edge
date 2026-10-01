@@ -198,7 +198,7 @@ config/
 ├── rules.yaml            ← what is stored, and what raises an alert
 ├── notifications.yaml    ← log channel and webhook delivery, per-rule routing
 ├── collection.yaml       ← dataset collection sessions (optional)
-├── boxmot_tracker.yaml   ← algorithm selection, full profiles, ReID setup
+├── boxmot_tracker.yaml   ← selected algorithm overrides + optional ReID
 └── config_sample/        ← fully-commented reference for every field
 ```
 

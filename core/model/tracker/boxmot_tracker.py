@@ -262,11 +262,11 @@ class BoxMotTracker(Tracker):
         if not isinstance(raw, dict):
             raise RuntimeError(f"tracker config '{path}' must contain a YAML mapping")
 
-        # New single-file schema. Every algorithm profile is validated, not
-        # just the active one, so switching `algorithm` can never reveal a
-        # misspelled option that was silently waiting in the file.
-        if any(key in raw for key in ("common", "reid", "algorithms")):
-            allowed_top = {"algorithm", "common", "reid", "algorithms"}
+        # New single-file schema: the registry owns the complete defaults and
+        # allowed fields for every implementation; the device file contains
+        # overrides only for its one selected algorithm.
+        if any(key in raw for key in ("common", "reid", "params", "algorithms")):
+            allowed_top = {"algorithm", "common", "reid", "params", "algorithms"}
             unknown_top = set(raw) - allowed_top
             if unknown_top:
                 raise RuntimeError(
@@ -276,22 +276,35 @@ class BoxMotTracker(Tracker):
 
             algorithm = self._algorithm_name(raw.get("algorithm", _DEFAULT_ALGORITHM))
             common = self._mapping(raw.get("common", {}), "common")
-            profiles = self._mapping(raw.get("algorithms", {}), "algorithms")
-            unknown_algorithms = set(profiles) - set(BOXMOT_ALGORITHMS)
-            if unknown_algorithms:
+            if "params" in raw and "algorithms" in raw:
                 raise RuntimeError(
-                    "tracker config has unsupported algorithm profile(s): "
-                    f"{', '.join(sorted(unknown_algorithms))}"
+                    "tracker config must use 'params', not both 'params' and "
+                    "the deprecated 'algorithms' layout"
                 )
-            missing_algorithms = set(BOXMOT_ALGORITHMS) - set(profiles)
-            if missing_algorithms:
-                raise RuntimeError(
-                    "tracker config is missing required algorithm profile(s): "
-                    f"{', '.join(sorted(missing_algorithms))}"
+            if "algorithms" in raw:
+                # Compatibility with the briefly published all-profiles layout.
+                profiles = self._mapping(raw["algorithms"], "algorithms")
+                unknown_algorithms = set(profiles) - set(BOXMOT_ALGORITHMS)
+                if unknown_algorithms:
+                    raise RuntimeError(
+                        "tracker config has unsupported algorithm profile(s): "
+                        f"{', '.join(sorted(unknown_algorithms))}"
+                    )
+                if algorithm not in profiles:
+                    raise RuntimeError(
+                        f"tracker config selects '{algorithm}' but its profile is missing"
+                    )
+                configured = self._mapping(
+                    profiles[algorithm], f"algorithms.{algorithm}"
                 )
-            for name, configured in profiles.items():
-                resolve_params(name, common, self._mapping(configured, f"algorithms.{name}"))
-            params = resolve_params(algorithm, common, profiles[algorithm])
+                log.warning(
+                    "tracker '%s': the all-profiles 'algorithms' layout is deprecated; "
+                    "keep only the selected profile under 'params'",
+                    self._cfg.id,
+                )
+            else:
+                configured = self._mapping(raw.get("params", {}), "params")
+            params = resolve_params(algorithm, common, configured)
             reid = self._reid_config(self._mapping(raw.get("reid", {}), "reid"))
         else:
             # Backward compatibility lets existing deployments pull this code

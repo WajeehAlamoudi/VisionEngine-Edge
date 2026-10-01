@@ -148,8 +148,8 @@ models:
   #               root — e.g. "config/boxmot_tracker.yaml". On Ultralytics,
   #               copy config_sample/boxmot_tracker.sample.yaml. Its `algorithm`
   #               selects ByteTrack, BoT-SORT, OCSORT, StrongSORT, DeepOCSORT,
-  #               SFSORT, HybridSORT, BoostTrack or OccluBoost. The same file
-  #               contains complete, strictly validated profiles and ReID setup.
+  #               SFSORT, HybridSORT, BoostTrack or OccluBoost. The file holds
+  #               only the selected algorithm's overrides and optional ReID.
   #
   #               On runtime: deepstream this field means something slightly
   #               different — it is nvtracker's config, and it DOES choose the

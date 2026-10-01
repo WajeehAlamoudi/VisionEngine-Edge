@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import mock_open, patch
 
-import yaml
 import numpy as np
+import yaml
 from boxmot.trackers.base import BaseTracker
 
 from core.config import ModelConfig
@@ -42,9 +42,11 @@ def model_config(tracker: str) -> ModelConfig:
 
 
 class BoxMotConfigTests(unittest.TestCase):
-    def test_sample_contains_and_validates_every_registered_algorithm(self):
+    def test_sample_contains_only_selected_algorithm_and_validates(self):
         raw = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
-        self.assertEqual(set(raw["algorithms"]), set(BOXMOT_ALGORITHMS))
+        self.assertEqual(raw["algorithm"], "bytetrack")
+        self.assertIn("params", raw)
+        self.assertNotIn("algorithms", raw)
 
         algorithm, params, reid = BoxMotTracker(
             model_config(str(SAMPLE))
@@ -90,23 +92,25 @@ class BoxMotConfigTests(unittest.TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(first[0].track_id, second[0].track_id)
 
-    def test_unknown_parameter_fails_even_in_inactive_profile(self):
+    def test_unknown_parameter_fails_in_selected_profile(self):
         raw = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
-        raw["algorithms"]["botsort"]["misspelled_threshold"] = 0.5
+        raw["params"]["misspelled_threshold"] = 0.5
         reader = mock_open(read_data=yaml.safe_dump(raw))
         with patch.object(Path, "is_file", return_value=True), \
                 patch.object(Path, "open", reader):
             with self.assertRaisesRegex(RuntimeError, "misspelled_threshold"):
                 BoxMotTracker(model_config("boxmot_tracker.yaml"))._load_config()
 
-    def test_missing_inactive_profile_fails(self):
+    def test_other_algorithm_profiles_are_not_required(self):
         raw = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
-        del raw["algorithms"]["strongsort"]
         reader = mock_open(read_data=yaml.safe_dump(raw))
         with patch.object(Path, "is_file", return_value=True), \
                 patch.object(Path, "open", reader):
-            with self.assertRaisesRegex(RuntimeError, "strongsort"):
-                BoxMotTracker(model_config("boxmot_tracker.yaml"))._load_config()
+            algorithm, params, _ = BoxMotTracker(
+                model_config("boxmot_tracker.yaml")
+            )._load_config()
+        self.assertEqual(algorithm, "bytetrack")
+        self.assertNotIn("with_reid", params)
 
     def test_legacy_flat_botsort_config_remains_deployable(self):
         raw = {

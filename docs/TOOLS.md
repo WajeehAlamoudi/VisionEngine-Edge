@@ -262,7 +262,7 @@ Check three things here: the detector loaded the format you expect on the device
 you expect; ReID says `tensorrt` and not `pytorch`; and the stream resolution
 matches what your zones were drawn against.
 
-The unified tracker loader validates every profile before construction. An
+The unified tracker loader validates the selected profile before construction. An
 unknown or misspelled key stops startup instead of being absorbed by BoxMOT's
 `**kwargs`; the startup line then confirms which profile became active.
 

@@ -60,14 +60,14 @@ can be reviewed in a diff.
 | `rules.yaml` | What is stored and what raises an alert | Per use case |
 | `notifications.yaml` | Log channel and webhook delivery, per-rule routing | Per use case |
 | `collection.yaml` | Dataset-building sessions | Optional |
-| `boxmot_tracker.yaml` | BoxMOT algorithm, complete profiles and ReID | When tracking is on |
+| `boxmot_tracker.yaml` | Selected BoxMOT algorithm, overrides and optional ReID | When tracking is on |
 | `deepstream_infer.txt` | nvinfer config — network shape, class count, clustering | `runtime: deepstream` only |
 | `peoplenet_labels.txt` | Model's class names, one per line, in model order | `runtime: deepstream` only |
 | `nvdcf_tracker.yml` | nvtracker config — chooses the tracking algorithm | `runtime: deepstream` + `use_tracker` |
 
 `boxmot_tracker.yaml` is read at model load time from the path in
 `models.yaml` → `tracker`, only when `use_tracker: true`. Its own loader
-strictly validates the selected algorithm, every saved profile and ReID setup.
+strictly validates the selected algorithm, its overrides and ReID setup.
 
 ---
 
@@ -236,15 +236,16 @@ blank file means the feature is off. The file must still exist. With content,
 
 ### Tracker config
 
-The single tracker YAML has four top-level fields: `algorithm`, `common`,
-`reid`, and `algorithms`. `algorithm` selects one of `bytetrack`, `botsort`,
+The single tracker YAML has `algorithm`, `common`, `params`, and optional
+`reid` fields. `algorithm` selects one of `bytetrack`, `botsort`,
 `ocsort`, `strongsort`, `deepocsort`, `sfsort`, `hybridsort`, `boosttrack`, or
-`occluboost`. `common` holds BoxMOT base settings; `algorithms` holds the full
-profile for each implementation; `reid` is built only when the selected
-profile needs it. Start from `config_sample/boxmot_tracker.sample.yaml`.
+`occluboost`. `common` holds BoxMOT base overrides; `params` holds only the
+selected implementation's overrides; `reid` is built only when it needs one.
+The Python registry owns the complete defaults and allowed field list for all
+nine implementations. Start from `config_sample/boxmot_tracker.sample.yaml`.
 
-Every profile is validated, including inactive profiles. Unknown names, typos,
-wrong value types and a missing selected profile stop startup. The registry is
+The selected profile is strictly validated. Unknown names, typos and wrong
+value types stop startup. The registry is
 pinned to BoxMOT 19.0.0 so the declared parameter set cannot drift underneath
 the configuration.
 
