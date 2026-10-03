@@ -64,6 +64,7 @@ StartLimitBurst=20
 Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$PROJECT_DIR
+ExecStartPre=+/bin/sh -c 'if command -v jetson_clocks >/dev/null 2>&1; then jetson_clocks || echo "WARNING: jetson_clocks failed; continuing with dynamic clocks" >&2; else echo "WARNING: jetson_clocks is unavailable; continuing with dynamic clocks" >&2; fi'
 ExecStart=$PYTHON main.py
 # always, not on-failure: losing the cameras is exactly when a restart is
 # wanted, and RestartSec gives a slow network time to arrive.
