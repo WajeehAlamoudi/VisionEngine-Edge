@@ -13,7 +13,7 @@
 
 <br/>
 
-[![Docs](https://img.shields.io/badge/Docs-7%20guides-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](.)
+[![Docs](https://img.shields.io/badge/Docs-8%20guides-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](.)
 [![Scope](https://img.shields.io/badge/Scope-Edge%20agent-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](../README.md)
 [![Status](https://img.shields.io/badge/Status-Production-1a1a2e?style=for-the-badge&logoColor=4fc3f7)](DEPLOYMENT.md)
 
@@ -49,6 +49,7 @@ more importantly, what each one actually means.
 | **[TOOLS](TOOLS.md)** | Running the agent, the debug tool, the service, reading the logs | Operating or troubleshooting a device |
 | **[STREAM_RECOVERY](STREAM_RECOVERY.md)** | What a lost RTSP stream does to the pipeline, how it recovers, and the network path behind it | A camera goes dark, or a site is on Wi-Fi |
 | **[RUNTIME_STABILITY](RUNTIME_STABILITY.md)** | Which runtime a site should use, what each costs, and the open ReID CUDA crash | Choosing deepstream vs ultralytics, or the GPU dies under load |
+| **[POWER_RECOVERY](POWER_RECOVERY.md)** | Case jumper wiring, automatic startup after DC power returns, and outage diagnosis | The whole edge device goes offline or needs a power-button press |
 
 ---
 
@@ -69,7 +70,8 @@ more importantly, what each one actually means.
         └── TOOLS          how to operate it
                │
                ├── STREAM_RECOVERY     ← when a camera stops answering
-               └── RUNTIME_STABILITY   ← which runtime, and when the GPU fails
+               ├── RUNTIME_STABILITY   ← which runtime, and when the GPU fails
+               └── POWER_RECOVERY      ← when the whole device powers off
 ```
 
 ---
@@ -88,7 +90,8 @@ gets updated. Each fact here has exactly one home:
 | Why a backend or threshold was chosen | [ARCHITECTURE](ARCHITECTURE.md) | Code comments |
 | How a camera recovers from a dropped stream, and the transport it uses | [STREAM_RECOVERY](STREAM_RECOVERY.md) | ARCHITECTURE |
 | What a runtime costs on real hardware, and open GPU failures | [RUNTIME_STABILITY](RUNTIME_STABILITY.md) | ARCHITECTURE |
-| A command you type | [TOOLS](TOOLS.md) or [DEPLOYMENT](DEPLOYMENT.md) | Both |
+| Power-loss recovery, case jumper wiring, and outage-specific checks | [POWER_RECOVERY](POWER_RECOVERY.md) | Runtime tuning guides |
+| General operating and installation commands | [TOOLS](TOOLS.md) or [DEPLOYMENT](DEPLOYMENT.md) | Both |
 
 Cross-reference with a link instead of repeating the text.
 
