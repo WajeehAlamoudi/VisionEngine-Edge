@@ -147,6 +147,7 @@ class BoxMotTracker(Tracker):
         # track_id written to the detections table has the same shape.
         self._ids = StableIdMap()
         self._uses_tensorrt_reid = False
+        self._prune_bytetrack_history = False
 
     def load(self) -> None:
         # Imported here, not at module level, for the reason _import_reid_backend
@@ -169,6 +170,7 @@ class BoxMotTracker(Tracker):
             self._uses_tensorrt_reid = reid["backend"] == "tensorrt"
 
         self._tracker = tracker_cls(**params)
+        self._prune_bytetrack_history = algorithm == "bytetrack"
         log.info(
             "tracker '%s' ready — boxmot %s (reid=%s)",
             self._cfg.id, algorithm, spec.needs_reid(params),
@@ -378,6 +380,22 @@ class BoxMotTracker(Tracker):
             raise RuntimeError("tracker reid weights must be a non-empty path or model name")
         return reid
 
+    def _prune_removed_history(self) -> None:
+        # BoxMOT 19 ByteTrack scans removed_stracks on every update. Keep only
+        # removals still needed to clean lost_stracks on the following update.
+        tracker = self._tracker
+        pools = (
+            [state.attrs for state in tracker.class_track_states.values()]
+            if tracker.per_class else [vars(tracker)]
+        )
+        for pool in pools:
+            lost_ids = {track.id for track in pool["lost_stracks"]}
+            pool["removed_stracks"] = [
+                track for track in pool["removed_stracks"] if track.id in lost_ids
+            ]
+        if tracker.per_class:
+            tracker._restore_class_track_collections()
+
     def update(self, frame, detections: list[InferenceResult]) -> list[InferenceResult]:
         if not detections:
             dets = np.empty((0, 6), dtype=np.float32)
@@ -392,6 +410,9 @@ class BoxMotTracker(Tracker):
                 tracks = self._tracker.update(dets, frame)
         else:
             tracks = self._tracker.update(dets, frame)
+
+        if self._prune_bytetrack_history:
+            self._prune_removed_history()
 
         out: list[InferenceResult] = []
         for xyxy, track_id, conf, cls_idx in zip(tracks.xyxy, tracks.id, tracks.conf, tracks.cls):
